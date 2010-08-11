@@ -203,30 +203,8 @@ class Corto_ProxyServer
 
         $this->startSession();
 
-        $this->getServicesModule()->{$parameters['ServiceName']}();
-
-        
-
-    // Get message and message type from binding
-    // If we want requests signed OR If we want assertions signed check signing
-        // If the issuer has a sharedkey defined
-            // Get the raw message from either JSON Redirect or JSON Post
-            // Check if the Signature equals the base64 encode of the shas of the shared key and message
-        // Else if we use HTTP Redirect
-            // Build the raw message from the query string
-            // Verify it against the public key
-        // Else if we use HTTP Post
-            // Check whether either the message or the assertion verifies
-
-    // Check whether we know the destination
-
-    // Resolve SAMLRequest ambiguity with 'true' or '1' for isPassive and ForceAuthn.
-
-    // If we have an encrypted assertion, decrypt it.
-
-    // Check SAMLResponse SubjectConfirmation timings
-    // Check SAMLResponse Conditions timings
-    // Check SAMLResponse AuthnStatement timing
+        $serviceName = $parameters['ServiceName'];
+        $this->getServicesModule()->$serviceName();
     }
 
     protected function _setCurrentEntity($entityCode, $remoteIdPMd5 = "")
@@ -290,227 +268,223 @@ class Corto_ProxyServer
         return $parameters;
     }
 
-    protected function prepareParameters()
+    //////// RESPONSE HANDLING ////////
+
+    public function createErrorResponse($request, $errorStatus)
     {
-        if (isset($_REQUEST['SAMLArt'])) {
-            $this->getBindingsModule()->handleArtifact();
+        $response = $this->_createBaseResponse($request);
+
+        $errorCodePrefix = 'urn:oasis:names:tc:SAML:2.0:status:';
+        $response['samlp:Status'] = array(
+            'samlp:StatusCode' => array(
+                '_Value' => 'urn:oasis:names:tc:SAML:2.0:status:Responder',
+                'samlp:StatusCode' => array(
+                    '_Value' => $errorCodePrefix . $errorStatus,
+                ),
+            ),
+        );
+        return $response;
+    }
+
+    public function createEnhancedResponse($request, $sourceResponse)
+    {
+        $response = $this->_createBaseResponse($request);
+
+        $response['samlp:Status']   = $sourceResponse['samlp:Status'];
+        $response['saml:Assertion'] = $sourceResponse['saml:Assertion'];
+
+        // remove us from the list otherwise we will as a proxy be there multiple times
+        // as the assertion passes through multiple times ???
+        $authenticatingAuthorities = &$response['saml:Assertion']['saml:AuthnStatement']['saml:AuthnContext']['saml:AuthenticatingAuthority'];
+        foreach ((array) $authenticatingAuthorities as $key => $authenticatingAuthority) {
+            if ($authenticatingAuthority['__v'] == $GLOBALS['meta']['EntityID']) {
+                unset($authenticatingAuthorities[$key]);
+            }
+        }
+
+        if ($this->getCurrentEntityUrl() !== $sourceResponse['saml:Issuer']['__v']) {
+            $authenticatingAuthorities[] = array('__v' => $sourceResponse['saml:Issuer']['__v']);
+        }
+
+        $subjectConfirmation = &$response['saml:Assertion']['saml:Subject']['saml:SubjectConfirmation']['saml:SubjectConfirmationData'];
+        $subjectConfirmation['_Recipient']    = $request['_AssertionConsumerServiceURL'];
+        $subjectConfirmation['_InResponseTo'] = $request['_ID'];
+
+        $response['saml:Assertion']['saml:Conditions']['saml:AudienceRestriction']['saml:Audience']['__v'] = $request['saml:Issuer']['__v'];
+
+        return $response;
+    }
+
+    public function createNewResponse($request, $attributes = array())
+    {
+        $response = $this->_createBaseResponse($request);
+
+        $soon       = $this->timeStamp($this->getConfig('NotOnOrAfter', 300));
+        $sessionEnd = $this->timeStamp($this->getConfig('SessionEnd', 60 * 60 * 12));
+
+        $response['saml:Assertion'] = array(
+            '_xmlns:xsi' => 'http://www.w3.org/2001/XMLSchema-instance',
+            '_xmlns:xs' => 'http://www.w3.org/2001/XMLSchema',
+            '_xmlns:samlp' => 'urn:oasis:names:tc:SAML:2.0:protocol',
+            '_xmlns:saml' => 'urn:oasis:names:tc:SAML:2.0:assertion',
+
+            '_ID'           => $this->getNewId(),
+            '_Version'      => '2.0',
+            '_IssueInstant' => $response['_IssueInstant'],
+
+            'saml:Issuer' => array('__v' => $response['saml:Issuer']['__v']),
+            'ds:Signature' => '__placeholder__',
+            'saml:Subject' => array(
+                'saml:NameID' => array(
+                    '_SPNameQualifier'  => $GLOBALS['meta']['EntityID'],
+                    '_Format'           => 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient',
+                    '__v'               => $this->getNewId(),
+                ),
+                'saml:SubjectConfirmation' => array(
+                    '_Method' => 'urn:oasis:names:tc:SAML:2.0:cm:bearer',
+                    'saml:SubjectConfirmationData' => array(
+                        '_NotOnOrAfter' => $soon,
+                        '_Recipient'    => $request['_AssertionConsumerServiceURL'], # req issuer
+                        '_InResponseTo' => $request['_ID'],
+                    ),
+                ),
+            ),
+            'saml:Conditions' => array(
+                '_NotBefore'    => $response['_IssueInstant'],
+                '_NotOnOrAfter' => $soon,
+                'saml:AudienceRestriction' => array(
+                    'saml:Audience' => array('__v' => $request['saml:Issuer']['__v']),
+                ),
+            ),
+            'saml:AuthnStatement' => array(
+                '_AuthnInstant'         => $response['_IssueInstant'],
+                '_SessionNotOnOrAfter'  => $sessionEnd,
+                'saml:SubjectLocality' => array(
+                    '_Address' => $_SERVER['REMOTE_ADDR'],
+                    '_DNSName' => $_SERVER['REMOTE_HOST'],
+                ),
+                'saml:AuthnContext' => array(
+                    'saml:AuthnContextClassRef' => array('__v' => 'urn:oasis:names:tc:SAML:2.0:ac:classes:Password'),
+                ),
+            ),
+        );
+
+        $attributes['binding'][] = $response['__']['ProtocolBinding'];
+        foreach ((array) $attributes as $key => $vs) {
+            foreach ($vs as $v) {
+                $attributeStatement[$key][] = $v;
+            }
+        }
+
+        $attributeConsumingServiceIndex = $request['_AttributeConsumingServiceIndex'];
+        if ($attributeConsumingServiceIndex) {
+            $attributeStatement['AttributeConsumingServiceIndex'] = "AttributeConsumingServiceIndex: $attributeConsumingServiceIndex";
         }
         else {
-            $this->convertAndVerifyMessages();
+            $attributeStatement['AttributeConsumingServiceIndex'] = '-no AttributeConsumingServiceIndex given-';
         }
 
-        if (isset($_REQUEST['hSAMLRequest'])) {
-            if (isset($_REQUEST['hSAMLResponse']['saml:EncryptedAssertion']) &&
-                    $encryptedAssertion = $_REQUEST['hSAMLResponse']['saml:EncryptedAssertion']) {
-
-                if (!isset($this->_entities['current']['keys']['private'])) {
-                    throw new Corto_ProxyServer_Exception("Encrypted assertion found, but private key for {$this->_entities['current']['EntityId']} is not registered, " .
-                            "unable to decrypt it to enrich assertion.");
-                }
-
-                $_REQUEST['hSAMLResponse']['saml:Assertion'] = $this->decryptElement(
-                    $this->_entities['current']['keys']['private'],
-                    $encryptedAssertion
-                );
-            }
-        }
-
-        if (isset($_REQUEST['hSAMLResponse'])) {
-            $this->getBindingsModule()->prepareForSLO($_REQUEST['hSAMLResponse'], 'received');
-        }
-
-        $this->checkDestinationAudienceAndTiming();
-    }
-
-    function handleArtifact()
-    {
-        $artifacts = unpack('ntypecode/nendpointindex/H40sourceid/H40messagehandle', base64_decode($_REQUEST['SAMLArt']));
-        $artifactResolve = array(
-            'samlp:ArtifactResolve' => array(
-                '_xmlns:samlp'  => 'urn:oasis:names:tc:SAML:2.0:protocol',
-                '_xmlns:saml'   => 'urn:oasis:names:tc:SAML:2.0:assertion',
-                '_ID'           => ID(),
-                '_Version'      => '2.0',
-                '_IssueInstant' => timeStamp(),
-                'saml:Artifact' => array('__v' => $_REQUEST['SAMLArt']),
-                'saml:Issuer'   => array('__v' => $GLOBALS['meta']['EntityID']),
-            ),
-        );
-
-        $artifactResponse = soapRequest($GLOBALS['artifactResolutionServices'][$artifacts['sourceid']], $artifactResolve);
-        if ($_REQUEST['hSAMLResponse'] = $artifactResponse['samlp:ArtifactResponse']['samlp:Response']) {
-            $_REQUEST['hSAMLResponse']['__t'] = 'samlp:Response';
-        }
-        if ($_REQUEST['hSAMLRequest'] = $artifactResponse['samlp:ArtifactResponse']['samlp:AuthnRequest']) {
-            $_REQUEST['hSAMLRequest']['__t'] = 'samlp:AuthnRequest';
-        }
-    }
-
-    protected function convertAndVerifyMessages()
-    {
-        if (isset($_GET['Signature'])) {
-            $rawRequest = array();
-            foreach (explode("&", $_SERVER['QUERY_STRING']) as $parameter) {
-                if (preg_match("/^(.+)=(.*)$/", $parameter, $keyAndValue)) {
-                    $rawRequest[$keyAndValue[1]] = $keyAndValue[2];
-                }
-            }
-        }
-
-        foreach (array('SAMLRequest', 'SAMLResponse') as $req) {
-            $message = "";
-            $messageHashKey = 'h' . $req;
-            if (isset($_POST[$req])) {
-                // HTTP-POST binding
-                $message = base64_decode($_POST[$req]);
-            }
-            if (isset($_GET[$req])) {
-                // HTTP-Redirect binding
-                $message = gzinflate(base64_decode($_GET[$req]));
-            }
-            if ($message) {
-                $_REQUEST[$messageHashKey] = Corto_XmlToArray::xml2array($message);
-            }
-            if (isset($_GET['j' . $req])) {
-                // HTTP-Redirect JSON binding
-                $_REQUEST[$messageHashKey] = json_decode(gzinflate(base64_decode($_GET['j' . $req])), 1);
-            }
-            if (!isset($_REQUEST[$messageHashKey])) {
-                continue;
-            }
-            if (isset($_REQUEST['RelayState'])) {
-                $_REQUEST[$messageHashKey]['__']['RelayState'] = $_REQUEST['RelayState'];
-            }
-
-            $remoteMeta = array();
-            if (isset($GLOBALS['metabase']['remote'][$_REQUEST[$messageHashKey]['saml:Issuer']['__v']])) {
-                $remoteMeta = $GLOBALS['metabase']['remote'][$_REQUEST[$messageHashKey]['saml:Issuer']['__v']];
-            }
-
-            $verify = ($req == 'SAMLRequest' && ((isset($remoteMeta['AuthnRequestsSigned']) && $remoteMeta['AuthnRequestsSigned']) || isset($GLOBALS['meta']['WantAuthnRequestsSigned']) && $GLOBALS['meta']['WantAuthnRequestsSigned']))
-                    ||
-                    ($req == 'SAMLResponse' && isset($GLOBALS['meta']['WantAssertionsSigned']) && $GLOBALS['meta']['WantAssertionsSigned']);
-            if ($verify) {
-                if (isset($remoteMeta['sharedkey']) && $sharedKey = $remoteMeta['sharedkey']) {
-                    if (isset($_GET['Signature']) && $_GET['Signature']) {
-                        $message = "j$req=" . $rawRequest['j' . $req] . (($relayState = $rawRequest['RelayState']) ? '&RelayState=' . $relayState : '');
-                    }
-                    else {
-                        $message = $_POST['j' . $req];
-                    }
-                    if (base64_encode(sha1($sharedKey . sha1($message))) != $_REQUEST['Signature']) {
-                        throw new Corto_ProxyServer_Exception('Integrity check failed (Sharedkey)');
-                    }
-                } elseif (isset($_GET['Signature']) && $signature = $_GET['Signature']) {
-                    $message = "$req=" . $rawRequest[$req];
-                    $message .= (($relayState = $rawRequest['RelayState']) ? '&RelayState=' . $relayState : '');
-                    $message .= '&SigAlg=' . $rawRequest['SigAlg'];
-                    $verified = openssl_verify($message, base64_decode($signature), $GLOBALS['certificates'][$_REQUEST[$messageHashKey]['saml:Issuer']['__v']]['public']);
-                    if ($verified != 1) {
-                        throw new Corto_ProxyServer_Exception('Integrity check failed (PKI)');
-                    }
-                } else {
-                    if (!isset($GLOBALS['certificates'][$GLOBALS['meta']['EntityID']]['public'])) {
-                        throw new Corto_ProxyServer_Exception("No public key found for {$GLOBALS['meta']['EntityID']}");
-                    }
-
-                    $verified = ($this->getSigningModule()->verify(
-                        $GLOBALS['certificates'][$GLOBALS['meta']['EntityID']]['public'],
-                        $message,
-                        $_REQUEST[$messageHashKey]
-                    ) || $this->getSigningModule()->verify(
-                        $GLOBALS['certificates'][$GLOBALS['meta']['EntityID']]['public'],
-                        $message,
-                        $_REQUEST[$messageHashKey]['saml:Assertion']
-                    ));
-                    if (!$verified) {
-                        throw new Corto_ProxyServer_Exception("Could not validate " . print_r($_REQUEST[$messageHashKey], 1));
-                    }
-                }
-            }
-            if ($req == 'SAMLRequest') {
-                $forceAuthentication = &$_REQUEST[$messageHashKey]['_ForceAuthn'];
-                $forceAuthentication = $forceAuthentication == 'true' || $forceAuthentication == '1';
-                $isPassive = &$_REQUEST[$messageHashKey]['_IsPassive'];
-                $isPassive = $isPassive == 'true' || $isPassive == '1';
-            }
-        }
-    }
-
-
-    ////////  ENCRYPTION /////////
-
-    public function encryptElement($publicKey, $element, $tag = null)
-    {
-        if ($tag) {
-            $element['__t'] = $tag;
-        }
-        $data = Corto_XmlToArray::array2xml($element);
-
-        $cipher = mcrypt_module_open(MCRYPT_RIJNDAEL_128, '', MCRYPT_MODE_CBC, '');
-        $iv         = mcrypt_create_iv(mcrypt_enc_get_iv_size($cipher), MCRYPT_DEV_URANDOM);
-        $sessionKey = mcrypt_create_iv(mcrypt_enc_get_key_size($cipher), MCRYPT_DEV_URANDOM);
-
-        mcrypt_generic_init($cipher, $sessionKey, $iv);
-        $encryptedData = $iv . mcrypt_generic($cipher, $data);
-        mcrypt_generic_deinit($cipher);
-        mcrypt_module_close($cipher);
-
-        $publicKey = openssl_pkey_get_public($publicKey);
-        $encryptedKey = "";
-        openssl_public_encrypt($sessionKey, $encryptedKey, $publicKey, OPENSSL_PKCS1_PADDING);
-        openssl_free_key($publicKey);
-
-        $encryptedElement = array(
-            'xenc:EncryptedData' => array(
-                '_xmlns:xenc' => 'http://www.w3.org/2001/04/xmlenc#',
-                '_Type' => 'http://www.w3.org/2001/04/xmlenc#Element',
-                'ds:KeyInfo' => array(
-                    '_xmlns:ds' => "http://www.w3.org/2000/09/xmldsig#",
-                    'xenc:EncryptedKey' => array(
-                        '_Id' => $this->getNewId(),
-                        'xenc:EncryptionMethod' => array(
-                            '_Algorithm' => "http://www.w3.org/2001/04/xmlenc#rsa-1_5"
-                        ),
-                        'xenc:CipherData' => array(
-                            'xenc:CipherValue' => array(
-                                '__v' => base64_encode($encryptedKey),
-                            ),
-                        ),
-                    ),
+        $response['saml:Assertion']['saml:AttributeStatement']['saml:Attribute'] = Corto_XmlToArray::array2attributes($attributeStatement);
+        $extraAttributes = Array(
+            '_Name' => 'xuid',
+            '_NameFormat' => 'urn:oasis:names:tc:SAML:2.0:attrname-format:basic',
+            'saml:AttributeValue' => Array(
+                Array(
+                    '_xsi:type' => 'xs:string',
+                    '__v' => 'abc@xxx',
                 ),
-                'xenc:EncryptionMethod' => array(
-                    '_Algorithm' => 'http://www.w3.org/2001/04/xmlenc#aes128-cbc',
-                ),
-                'xenc:CipherData' => array(
-                    'xenc:CipherValue' => array(
-                        '__v' => base64_encode($encryptedData),
-                    ),
+                Array(
+                    '_xsi:type' => 'xs:string',
+                    '__v' => 'def@yyy',
                 ),
             ),
         );
-        return $encryptedElement;
+
+        $extraEncryptedAttributes = $this->getEncryptionModule()->encryptElement(
+            $GLOBALS['certificates'][$this->_entities['current']['EntityID']]['public'],
+            $extraAttributes,
+            'saml:EncryptedAttribute'
+        );
+        $response['saml:Assertion']['saml:AttributeStatement']['saml:EncryptedAttribute'][] = $extraEncryptedAttributes;
+
+        return $response;
     }
-    
-    public function decryptElement($privateKey, $element, $asXML = false)
+
+    protected function _createBaseResponse($request)
     {
-        $encryptedKey  = base64_decode($element['xenc:EncryptedData']['ds:KeyInfo']['xenc:EncryptedKey']['xenc:CipherData']['xenc:CipherValue']['__v']);
-        $encryptedData = base64_decode($element['xenc:EncryptedData']['xenc:CipherData']['xenc:CipherValue']['__v']);
+        $now = $this->timeStamp();
+        $response = array(
+            Corto_XmlToArray::TAG_NAME_KEY => 'samlp:Response',
+            Corto_XmlToArray::PRIVATE_KEY_PREFIX => array(
+                'paramname' => 'SAMLResponse',
+                'RelayState'=> $request['__']['RelayState'],
+                'target'    => $request['__']['target'],
+            ),
+            '_xmlns:samlp' => 'urn:oasis:names:tc:SAML:2.0:protocol',
+            '_xmlns:saml'  => 'urn:oasis:names:tc:SAML:2.0:assertion',
 
-        $privateKey = openssl_pkey_get_private($privateKey);
-        openssl_private_decrypt($encryptedKey, $sessionKey, $privateKey, OPENSSL_PKCS1_PADDING);
-        openssl_free_key($privateKey);
+            '_ID'           => $this->getNewId(),
+            '_Version'      => '2.0',
+            '_IssueInstant' => $now,
+            '_InResponseTo' => $request['_ID'],
 
-        $cipher = mcrypt_module_open(MCRYPT_RIJNDAEL_128, '', MCRYPT_MODE_CBC, '');
-        $ivSize = mcrypt_enc_get_iv_size($cipher);
-        $iv = substr($encryptedData, 0, $ivSize);
+            'saml:Issuer' => array('__v' => $this->getCurrentEntityUrl()),
+            'samlp:Status' => array(
+                'samlp:StatusCode' => array(
+                    '_Value' => 'urn:oasis:names:tc:SAML:2.0:status:Success',
+                ),
+            ),
+        );
 
-        mcrypt_generic_init($cipher, $sessionKey, $iv);
+        $destinationID = $request['saml:Issuer']['__v'];
+        $response['__']['destinationid'] = $destinationID;
 
-        $decryptedData = mdecrypt_generic($cipher, substr($encryptedData, $ivSize));
-        mcrypt_generic_deinit($cipher);
-        mcrypt_module_close($cipher);
-        return $asXML ? $decryptedData : Corto_XmlToArray::xml2array($decryptedData);
+        if ($acsUrl = $request['_AssertionConsumerServiceURL']) {
+            $response['_Destination'] = $acsUrl;
+            $response['__']['ProtocolBinding'] = $request['_ProtocolBinding'];
+        } else {
+            $remoteEntity = $this->getRemoteEntity($destinationID);
+            $remoteAcs = $remoteEntity['AssertionConsumerService'];
+
+            $response['_Destination']           = $remoteAcs['Location'];
+            $response['__']['ProtocolBinding']  = $remoteAcs['Binding'];
+        }
+
+        if (!$response['_Destination']) {
+            throw new Corto_ProxyServer_Exception("No Destination in request or metadata for: $destinationID");
+        }
+
+        return $response;
+    }
+
+    function sendResponse($request, $response)
+    {
+        $requestIssuer = $request['saml:Issuer']['__v'];
+        $sp = $this->getRemoteEntity($requestIssuer);
+
+        if ($response['samlp:Status']['samlp:StatusCode']['_Value'] == 'urn:oasis:names:tc:SAML:2.0:status:Success') {
+            $this->filterOutputAssertionAttributes($response);
+
+            return $this->send($response, $sp);
+        }
+        
+        unset($response['saml:Assertion']);
+        $this->send($response, $sp);
+    }
+
+    ////////  REQUEST HANDLING /////////
+
+    public function sendAuthenticationRequest(array $request, $idp, $scope = null)
+    {
+        $id = $request['_ID'];
+        $_SESSION[$id]['SAMLRequest'] = $request;
+
+        $newRequest = $this->createRequest($idp, $scope);
+
+        $newId = $newRequest['_ID'];
+        $_SESSION[$newId]['_InResponseTo'] = $id;
+
+        $this->getBindingsModule()->send($newRequest, $this->_entities['remote'][$idp]);
     }
 
     ////////  ATTRIBUTE FILTERING /////////

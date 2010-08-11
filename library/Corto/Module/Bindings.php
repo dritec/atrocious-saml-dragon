@@ -21,6 +21,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         $request = $this->_receiveMessage(self::KEY_REQUEST);
         $this->_verifyRequest($request);
         $this->_c14nRequest($request);
+        return $request['message'];
     }
 
     public function receiveResponse()
@@ -28,6 +29,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         $response = $this->_receiveMessage(self::KEY_RESPONSE);
         $this->_decryptResponse($response);
         $this->_verifyResponse($response);
+        return $response['message'];
     }
 
     protected function _receiveMessage($key)
@@ -87,7 +89,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         if ($key === self::KEY_REQUEST) {
             if (isset($artifactResponse['samlp:ArtifactResponse']['samlp:AuthnRequest'])) {
                 $message = $artifactResponse['samlp:ArtifactResponse']['samlp:AuthnRequest'];
-                $message['__t'] = 'samlp:AuthnRequest';
+                $message[Corto_XmlToArray::TAG_NAME_KEY] = 'samlp:AuthnRequest';
             }
             else {
                 return false;
@@ -96,7 +98,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         else if ($key === self::KEY_RESPONSE) {
             if (isset($artifactResponse['samlp:ArtifactResponse']['samlp:AuthnRequest'])) {
                 $message = $artifactResponse['samlp:ArtifactResponse']['samlp:AuthnRequest'];
-                $message['__t'] = 'samlp:Response';
+                $message[Corto_XmlToArray::TAG_NAME_KEY] = 'samlp:Response';
             }
             else {
                 return false;
@@ -104,6 +106,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         }
 
         $relayState = $_REQUEST['RelayState'];
+        $message[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['RelayState'] = $relayState;
 
         return array(
             'Message'    => $message,
@@ -119,7 +122,9 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
 
         $message        = base64_decode($_POST[$key]);
         $messageArray   = $this->_getArrayFromReceivedMessage($message);
+        
         $relayState     = $_POST['RelayState'];
+        $messageArray[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['RelayState'] = $relayState;
         
         return array(
             'Message'    => $messageArray,
@@ -136,7 +141,10 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
 
         $message = gzinflate(base64_decode($_GET[$key]));
         $messageArray       = $this->_getArrayFromReceivedMessage($message);
+
         $relayState         = $_GET['RelayState'];
+        $messageArray[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['RelayState'] = $relayState;
+
         $signature          = $_GET['Signature'];
         $signingAlgorithm   = $_GET['SigAlg'];
 
@@ -183,7 +191,47 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
 
     protected function _decryptResponse(array $response)
     {
-        
+        if (isset($response['saml:EncryptedAssertion'])) {
+            $encryptedAssertion = $response['saml:EncryptedAssertion'];
+
+            $currentCertificates = $this->_server->getCurrentEntitySetting('certificates', array());
+            if (!isset($currentCertificates['private'])) {
+                $exceptionMessage = "Encrypted assertion found, but private key for ".
+                        $this->_server->getCurrentEntityUrl().
+                        " is not registered, unable to decrypt it to enrich assertion.";
+                throw new Corto_Module_Bindings_Exception($exceptionMessage);
+            }
+
+            $response['saml:Assertion'] = $this->_decryptElement(
+                $currentCertificates['private'],
+                $encryptedAssertion
+            );
+        }
+    }
+
+    protected function _decryptElement($privateKey, $element, $returnAsXML = false)
+    {
+        $encryptedKey  = base64_decode($element['xenc:EncryptedData']['ds:KeyInfo']['xenc:EncryptedKey']['xenc:CipherData']['xenc:CipherValue']['__v']);
+        $encryptedData = base64_decode($element['xenc:EncryptedData']['xenc:CipherData']['xenc:CipherValue']['__v']);
+
+        $privateKey = openssl_pkey_get_private($privateKey);
+        openssl_private_decrypt($encryptedKey, $sessionKey, $privateKey, OPENSSL_PKCS1_PADDING);
+        openssl_free_key($privateKey);
+
+        $cipher = mcrypt_module_open(MCRYPT_RIJNDAEL_128, '', MCRYPT_MODE_CBC, '');
+        $ivSize = mcrypt_enc_get_iv_size($cipher);
+        $iv = substr($encryptedData, 0, $ivSize);
+
+        mcrypt_generic_init($cipher, $sessionKey, $iv);
+
+        $decryptedData = mdecrypt_generic($cipher, substr($encryptedData, $ivSize));
+        mcrypt_generic_deinit($cipher);
+        mcrypt_module_close($cipher);
+
+        if ($returnAsXML) {
+            return $decryptedData;
+        }
+        return Corto_XmlToArray::xml2array($decryptedData);
     }
 
     protected function _verifyResponse(array $response)
@@ -192,6 +240,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
             $this->_verifySignatureMessage($response, self::KEY_RESPONSE);
         }
         $this->_verifyMessageDestinedForUs($response['message']);
+        $this->_verifyTimings($response);
     }
 
     protected function _verifySignature(array $message, $key)
@@ -201,14 +250,15 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         }
 
         // Otherwise it's in the message or in the assertion in the message (HTTP Post Response)
-        $requestIssuer = $request['saml:Issuer']['__v'];
-        $remoteEntity = $this->_server->getRemoteEntity($requestIssuer);
+        $messageIssuer = $message['saml:Issuer']['__v'];
+        $remoteEntity = $this->_server->getRemoteEntity($messageIssuer);
 
         $messageVerified = $this->_verifySignatureXMLElement(
             $remoteEntity['certificates']['public'],
             $message['MessageRaw'],
             $message['message']
         );
+
         if (!isset($message['message']['saml:Assertion'])) {
             return $messageVerified;
         }
@@ -269,6 +319,58 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
             if (strpos($this->_server->getCurrentEntityUrl(), $destinationId) !== 0) {
                 throw new Corto_Module_Bindings_VerificationException("Destination: '$destinationId' is not here");
             }
+        }
+        return true;
+    }
+
+    protected function _verifyTimings(array $message)
+    {
+        // just use string cmp all times in ISO like format without timezone (but everybody appends a Z anyways ...)
+        $skew = $this->_server->getConfig('max_age_seconds', 3600);
+        $aShortWhileAgo = $this->_server->timeStamp(-$skew);
+        $inAShortWhile  = $this->_server->timeStamp($skew);
+        $issues = array();
+
+        // Check SAMLResponse SubjectConfirmation timings
+
+        if (isset($message['saml:Assertion']['saml:Subject']['saml:SubjectConfirmation']['saml:SubjectConfirmationData']['_NotBefore'])) {
+            if ($inAShortWhile < $message['saml:Assertion']['saml:Subject']['saml:SubjectConfirmation']['saml:SubjectConfirmationData']['_NotBefore']) {
+                $issues[] = 'SubjectConfirmation not valid yet';
+            }
+        }
+
+        if (isset($message['saml:Assertion']['saml:Subject']['saml:SubjectConfirmation']['saml:SubjectConfirmationData']['_NotOnOrAfter'])) {
+            if ($aShortWhileAgo > $message['saml:Assertion']['saml:Subject']['saml:SubjectConfirmation']['saml:SubjectConfirmationData']['_NotOnOrAfter']) {
+                $issues[] = 'SubjectConfirmation too old';
+            }
+        }
+
+        // Check SAMLResponse Conditions timings
+
+        if (isset($message['saml:Assertion']['saml:Conditions']['_NotBefore'])) {
+            if ($inAShortWhile < $message['saml:Assertion']['saml:Conditions']['_NotBefore']) {
+                $issues[] = 'Assertion Conditions not valid yet';
+            }
+        }
+
+        if (isset($message['saml:Assertion']['saml:Conditions']['_NotOnOrAfter'])) {
+            if ($aShortWhileAgo > $message['saml:Assertion']['saml:Conditions']['_NotOnOrAfter']) {
+                $issues[] = 'Assertions Condition too old';
+            }
+        }
+
+        // Check SAMLResponse AuthnStatement timing
+
+        if (isset($message['saml:Assertion']['saml:AuthnStatement']['_SessionNotOnOrAfter'])) {
+            if ($aShortWhileAgo > $message['saml:Assertion']['saml:AuthnStatement']['_SessionNotOnOrAfter']) {
+                $issues[] = 'AuthnStatement Session too old';
+            }
+        }
+
+        if (!empty($issues)) {
+            $message = 'Problems detected with timings! Please check if your server has the correct time set.';
+            $message .= ' Issues: '.implode(PHP_EOL, $issues);
+            throw new Corto_Module_Bindings_Exception($message);
         }
         return true;
     }

@@ -11,8 +11,9 @@ class Corto_Module_Services extends Corto_Module_Abstract
 
         // Add the hosted IdP as a scoped IdP
         $scopedIDPs = array();
-        if ($GLOBALS['meta']['idp']) {
-            $scopedIDPs[] = $GLOBALS['meta']['idp'];
+        $presetIdP = $this->_server->getConfig('idp');
+        if ($presetIdP) {
+            $scopedIDPs[] = $presetIdP;
         }
 
         // If ForceAuthn attribute is on, then remove cached responses and cached IDPs
@@ -30,57 +31,87 @@ class Corto_Module_Services extends Corto_Module_Abstract
         // If one of the scoped IDP has a cache entry, return that
         $cachedIDPs = array_keys((array) $_SESSION['CachedResponses']);
         if ($commonIDPs = array_intersect($cachedIDPs, $scopedIDPs) || (sizeof($scopedIDPs) == 0 && $commonIDPs = $cachedIDPs)) {
-            $response = $this->_server->createResponse($request, null, null, $_SESSION['CachedResponses'][$commonIDPs[0]]);
-            $this->_server-> sendResponse($request, $response);
+            $cachedResponse = $_SESSION['CachedResponses'][$commonIDPs[0]];
+            $response = $this->_server->createEnhancedResponse($request, $cachedResponse);
+            return $this->_server->sendResponse($request, $response);
         }
 
         // If the scoped proxycount = 0, respond with a ProxyCountExceeded error
         if (isset($request['samlp:Scoping']['_ProxyCount']) && $request['samlp:Scoping']['_ProxyCount'] == 0) {
-            $response = $this->_server->createResponse($request, 'ProxyCountExceeded');
-            $this->_server->sendResponse($request, $response);
+            $response = $this->_server->createErrorResponse($request, 'ProxyCountExceeded');
+            return $this->_server->sendResponse($request, $response);
         }
 
-        // If we configured an allowed IDPList then we ignore the original scoping rules
-        // and add that one IDP as allowed IDP and send the new authnrequest
-        if ($scope = $GLOBALS['meta']['IDPList']) {
-            $this->_server->sendAuthnRequest($GLOBALS['meta']['idp'], $scope);
+        // If we configured an allowed IdP and an IDPList then we ignore the original scoping rules
+        // and send the new authnrequest
+        $presetIdPs = $this->_server->getCurrentEntitySetting('IdPList');
+        if ($presetIdP && $presetIdPs) {
+            return $this->_server->sendAuthenticationRequest($request, $presetIdP, $presetIdPs);
         }
 
         // If we have an IdP configured then we send the authentication request to that IdP
-        if ($idp = $GLOBALS['meta']['idp']) {
-            $this->_server->sendAuthnRequest($idp);
+        if ($presetIdP) {
+            return $this->_server->sendAuthenticationRequest($request, $presetIdP);
         }
 
         // If we have a virtual IdP defined (multiple IdPs that Corto merges into one), use that.
-        if (isset($GLOBALS['meta']['virtual'])) {
-            $this->handleVirtualIDP();
+        if (isset($this->_server->getCurrentEntitySetting('virtual'))) {
+            return $this->handleVirtualIDP();
         }
 
         // Get all registered Single Sign On Services
         $candidateIDPs = array();
-        foreach ($GLOBALS['metabase']['remote'] as $idp => $metaData) {
-            if ($metaData['SingleSignOnService']) {
-                $candidateIDPs[] = $idp;
+        foreach ($this->_server->getRemoteEntities() as $remoteEntityId => $remoteEntity) {
+            if (isset($remoteEntity['SingleSignOnService'])) {
+                $candidateIDPs[] = $remoteEntityId;
             }
         }
 
         // Filter out the hosted entity and if we have scoping, filter out every non-scoped IdP
-        $candidateIDPs = array_diff($candidateIDPs, array($GLOBALS['meta']['EntityID']));
+        $candidateIDPs = array_diff($candidateIDPs, array($this->_server->getCurrentEntityUrl()));
         $candidateIDPs = sizeof($scopedIDPs) > 0 ? array_intersect($scopedIDPs, $candidateIDPs) : $candidateIDPs;
 
         // More than 1 candidate found, send authentication request to the first one
         if (count($candidateIDPs) === 1) {
-            $this->_server->sendAuthnRequest($candidateIDPs[0]);
+            $idp = $candidateIDPs[0];
+            return $this->_server->sendAuthenticationRequest($request, $idp);
         }
 
         // No IdPs found! Send an error response back.
         if (count($candidateIDPs) === 0) {
-            $response = $this->_server->createResponse($request, 'NoSupportedIDP');
-            $this->_server->sendResponse($request, $response);
+            $response = $this->_server->createErrorResponse($request, 'NoSupportedIDP');
+            return $this->_server->sendResponse($request, $response);
         }
 
         // discover should take are of IsPassive ...
-        $this->discover($candidateIDPs);
+        return $this->showWayf($request, $candidateIDPs);
+    }
+
+    protected function showWayf($request, $candidateIdPs)
+    {
+        if ($request['_IsPassive'] === 'true') {
+            $response = $this->_server->createErrorResponse($request, 'NoPassive');
+            return $this->_server->sendResponse($request, $response);
+        }
+
+        $action = $this->_server->getCurrentEntityUrl('continueToIdP');
+
+        $id = $request['_ID'];
+        $_SESSION[$id]['SAMLRequest'] = $request;
+
+        $requestIssuer = $request['saml:Issuer']['__v'];
+        $remoteEntity = $this->_server->getRemoteEntity($requestIssuer);
+
+        $output = $this->_server->renderTemplate(
+            'discover',
+            array(
+                'action'            => $action,
+                'ID'                => $id,
+                'idpList'           => $candidateIdPs,
+                'metaDataSP'        => $remoteEntity,
+                'remoteEntities'    => $this->_server->getRemoteEntities(),
+            ));
+        $this->_server->sendOutput($output);
     }
 
     public function assertionConsumerService()
