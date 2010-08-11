@@ -11,13 +11,13 @@ class Corto_ProxyServer_Exception extends Exception
 class Corto_ProxyServer
 {
     const MODULE_BINDINGS   = 'Bindings';
+    const MODULE_SERVICES   = 'Services';
 
     const TEMPLATE_SOURCE_FILESYSTEM = 'filesystem';
     const TEMPLATE_SOURCE_MEMORY     = 'memory';
 
     const MESSAGE_TYPE_REQUEST  = 'SAMLRequest';
     const MESSAGE_TYPE_RESPONSE = 'SAMLResponse';
-
 
     protected $_requestArray;
     protected $_responseArray;
@@ -129,9 +129,17 @@ class Corto_ProxyServer
         return $this->_entities['hosted'];
     }
 
-    public function getCurrentHostedEntityUrl($serviceName = "", $remoteEntityId = "")
+    public function getCurrentEntityUrl($serviceName = "", $remoteEntityId = "")
     {
         return $this->getHostedEntityUrl($serviceName, $this->_entities['current']['EntityCode'], $remoteEntityId);
+    }
+
+    public function getCurrentEntitySetting($name, $default = null)
+    {
+        if (isset($this->_entities['current'][$name])) {
+            return $this->_entities['current'][$name];
+        }
+        return $default;
     }
 
     public function getHostedEntityUrl($entityCode, $serviceName = "", $remoteEntityId = "")
@@ -271,12 +279,14 @@ class Corto_ProxyServer
             }
         }
 
+        // Defaults
         if (!$parameters['EntityCode']) {
             $parameters['EntityCode'] = 'main';
         }
         if (!$parameters['ServiceName']) {
             $parameters['ServiceName'] = 'demoApp';
         }
+
         return $parameters;
     }
 
@@ -351,11 +361,11 @@ class Corto_ProxyServer
             $message = "";
             $messageHashKey = 'h' . $req;
             if (isset($_POST[$req])) {
-                // HTTP-POST XML binding
+                // HTTP-POST binding
                 $message = base64_decode($_POST[$req]);
             }
             if (isset($_GET[$req])) {
-                // HTTP-Redirect XML binding
+                // HTTP-Redirect binding
                 $message = gzinflate(base64_decode($_GET[$req]));
             }
             if ($message) {
@@ -615,7 +625,26 @@ class Corto_ProxyServer
 
     //////// OUTPUT /////////
 
-    protected function redirect($location, $message = null)
+    /**
+     * Parse the HTTP URL query string and return the (raw) parameters in an array.
+     *
+     * We need to do this ourselves, so that we get access to the raw (url encoded) values.
+     * This is required because different software can url encode to different values.
+     *
+     * @return array Raw parameters form the query string
+     */
+    public function getRawGet()
+    {
+        $rawGet = array();
+        foreach (explode("&", $_SERVER['QUERY_STRING']) as $parameter) {
+            if (preg_match("/^(.+)=(.*)$/", $parameter, $keyAndValue)) {
+                 $rawGet[$keyAndValue[1]] = $keyAndValue[2];
+            }
+        }
+        return $rawGet;
+    }
+
+    public function redirect($location, $message = null)
     {
         if (!$this->getConfig('debug', false)) {
             $this->sendHeader('Location', $location);
