@@ -11,7 +11,7 @@ class Corto_Package_PhpFile extends Corto_Package_Abstract
         $remoteEntitiesExport   = var_export($this->_metaData['remote'], true);
         $templateContentsExport = var_export($this->_templateContents, true);
 
-        $fileContents = <<<BOOTSTRAP
+        $fileContents = <<<MAIN
 \$server = new Corto_ProxyServer();
 
 \$hostedEntities = $hostedEntitiesExport;
@@ -29,7 +29,7 @@ class Corto_Package_PhpFile extends Corto_Package_Abstract
 );
 
 \$server->serveRequest(\$_SERVER['PATH_INFO']);
-BOOTSTRAP;
+MAIN;
 
         $fileContents .= $this->_getLibraryCode();
 
