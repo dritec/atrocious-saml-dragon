@@ -3,6 +3,7 @@
 /**
  *
  */
+require 'XmlToArray.php';
 
 class Corto_ProxyServer_Exception extends Exception
 {
@@ -23,6 +24,11 @@ class Corto_ProxyServer
     protected $_responseArray;
 
     protected $_server;
+    protected $_systemLog;
+    protected $_sessionLog;
+    protected $_sessionLogDefault;
+
+    protected $_hostedPath = "/";
 
     protected $_configs;
     protected $_entities = array(
@@ -124,6 +130,11 @@ class Corto_ProxyServer
         $this->_entities['hosted'] = $entities;
     }
 
+    public function setHostedPath($path)
+    {
+        $this->_hostedPath = $path;
+    }
+
     public function getHostedEntities()
     {
         return $this->_entities['hosted'];
@@ -157,10 +168,10 @@ class Corto_ProxyServer
         }
 
         if (!$serviceName) {
-            return $scheme . '://' . $host . '/' . $entityPart;
+            return $scheme . '://' . $host . ($this->_hostedPath ? $this->_hostedPath : ''). $entityPart;
         }
 
-        return $scheme . '://' . $host . '/' . $entityPart . '/' . $serviceName;
+        return $scheme . '://' . $host . ($this->_hostedPath ? $this->_hostedPath : '') . $entityPart . '/' . $serviceName;
     }
 
     public function getRemoteEntity($entityId)
@@ -202,9 +213,13 @@ class Corto_ProxyServer
         $this->_setCurrentEntity($parameters['EntityCode'], $parameters['RemoteIdPMd5']);
 
         $this->startSession();
+        $this->getSessionLog()->debug("Started request with $uri, resulting in parameters: ". var_export($parameters, true));
 
         $serviceName = $parameters['ServiceName'];
+
+        $this->getSessionLog()->debug("Calling service '$serviceName'");
         $this->getServicesModule()->$serviceName();
+        $this->getSessionLog()->debug("Done calling service");
     }
 
     protected function _setCurrentEntity($entityCode, $remoteIdPMd5 = "")
@@ -320,7 +335,7 @@ class Corto_ProxyServer
         $response = $this->_createBaseResponse($request);
 
         $soon       = $this->timeStamp($this->getConfig('NotOnOrAfter', 300));
-        $sessionEnd = $this->timeStamp($this->getConfig('SessionEnd', 60 * 60 * 12));
+        $sessionEnd = $this->timeStamp($this->getConfig('SessionEnd'  , 60 * 60 * 12));
 
         $response['saml:Assertion'] = array(
             '_xmlns:xsi' => 'http://www.w3.org/2001/XMLSchema-instance',
@@ -336,7 +351,7 @@ class Corto_ProxyServer
             'ds:Signature' => '__placeholder__',
             'saml:Subject' => array(
                 'saml:NameID' => array(
-                    '_SPNameQualifier'  => $GLOBALS['meta']['EntityID'],
+                    '_SPNameQualifier'  => $this->getCurrentEntityUrl(),
                     '_Format'           => 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient',
                     '__v'               => $this->getNewId(),
                 ),
@@ -369,6 +384,9 @@ class Corto_ProxyServer
             ),
         );
 
+        if (!isset($attributes['binding'])) {
+            $attributes['binding'] = array();
+        }
         $attributes['binding'][] = $response['__']['ProtocolBinding'];
         foreach ((array) $attributes as $key => $vs) {
             foreach ($vs as $v) {
@@ -418,7 +436,7 @@ class Corto_ProxyServer
             Corto_XmlToArray::PRIVATE_KEY_PREFIX => array(
                 'paramname' => 'SAMLResponse',
                 'RelayState'=> $request['__']['RelayState'],
-                'target'    => $request['__']['target'],
+                'target'    => (isset($request['__']['target'])?$request['__']['target']:''),
             ),
             '_xmlns:samlp' => 'urn:oasis:names:tc:SAML:2.0:protocol',
             '_xmlns:saml'  => 'urn:oasis:names:tc:SAML:2.0:assertion',
@@ -464,32 +482,34 @@ class Corto_ProxyServer
 
         if ($response['samlp:Status']['samlp:StatusCode']['_Value'] == 'urn:oasis:names:tc:SAML:2.0:status:Success') {
             $this->filterOutputAssertionAttributes($response);
-
-            return $this->send($response, $sp);
+            return $this->getBindingsModule()->send($response, $sp);
         }
-        
-        unset($response['saml:Assertion']);
-        $this->send($response, $sp);
+        else {
+            unset($response['saml:Assertion']);
+            return $this->getBindingsModule()->send($response, $sp);
+        }
     }
 
     ////////  REQUEST HANDLING /////////
 
     public function sendAuthenticationRequest(array $request, $idp, $scope = null)
     {
-        $id = $request['_ID'];
-        $_SESSION[$id]['SAMLRequest'] = $request;
+        $originalId = $request['_ID'];
 
         $newRequest = $this->createRequest($idp, $scope);
-
         $newId = $newRequest['_ID'];
-        $_SESSION[$newId]['_InResponseTo'] = $id;
+
+        // Store the original Request
+        $_SESSION[$originalId]['SAMLRequest'] = $request;
+        // Store the mapping from the new request ID to the original request ID
+        $_SESSION[$newId]['_InResponseTo'] = $originalId;
 
         $this->getBindingsModule()->send($newRequest, $this->_entities['remote'][$idp]);
     }
 
     ////////  ATTRIBUTE FILTERING /////////
 
-    protected function filterInputAssertionAttributes(&$response)
+    public function filterInputAssertionAttributes(&$response)
     {
         $hostedEntityMetaData = $this->getCurrentEntity();
 
@@ -504,7 +524,7 @@ class Corto_ProxyServer
         }
     }
 
-    protected function filterOutputAssertionAttributes(&$response)
+    public function filterOutputAssertionAttributes(&$response)
     {
         $responseDestination = $response['__']['destinationid'];
 
@@ -542,18 +562,16 @@ class Corto_ProxyServer
 
     public function renderTemplate($templateName, $vars = array(), $parentTemplates = array())
     {
-        if (is_array($vars)) {
-            extract($vars);
-        }
-        else {
-            $content = $vars;
+        $this->getSessionLog()->debug("Rendering template '$templateName'");
+        if (!is_array($vars)) {
+            $vars = array('content' => $vars);
         }
 
-        $templateFileName = $templateName . '.tpl.php';
+        $templateFileName = $templateName . '.phtml';
 
         ob_start();
 
-        $this->_renderTemplate($templateFileName);
+        $this->_renderTemplate($templateFileName, $vars);
 
         $content = ob_get_contents();
         ob_end_clean();
@@ -569,8 +587,10 @@ class Corto_ProxyServer
         return $content;
     }
 
-    protected function _renderTemplate($templateFileName)
+    protected function _renderTemplate($templateFileName, $vars)
     {
+        extract($vars);
+
         $source = $this->getTemplateSource();
         switch ($source['type'])
         {
@@ -583,21 +603,23 @@ class Corto_ProxyServer
                 break;
 
             case self::TEMPLATE_SOURCE_FILESYSTEM;
-                if (!isset($source['arguments']['filepath'])) {
+                if (!isset($source['arguments']['FilePath'])) {
                     throw new Corto_ProxyServer_Exception('Template path not set, unable to render templates from filesystem!');
                 }
 
-                $filePath = $source['arguments']['filepath'] . $templateFileName;
+                $filePath = $source['arguments']['FilePath'] . $templateFileName;
                 if (!file_exists($filePath)) {
                     throw new Corto_ProxyServer_Exception('Template file does not exist: ' . $filePath);
                 }
 
                 include($filePath);
                 break;
+            default:
+                throw new Corto_ProxyServer_Exception('No template source set! Please configure a template source with Corto_ProxyServer->setTemplateSource()');
         }
     }
 
-    //////// OUTPUT /////////
+    //////// I/O /////////
 
     /**
      * Parse the HTTP URL query string and return the (raw) parameters in an array.
@@ -618,13 +640,16 @@ class Corto_ProxyServer
         return $rawGet;
     }
 
-    public function redirect($location, $message = null)
+    public function redirect($location)
     {
+        $this->getSessionLog()->debug("Redirecting to $location");
+        
         if (!$this->getConfig('debug', false)) {
             $this->sendHeader('Location', $location);
         }
 
-        $this->renderTemplate('redirect', array('location'=>$location));
+        $output = $this->renderTemplate('redirect', array('location'=>$location));
+        $this->sendOutput($output);
     }
 
     public function sendHeader($name, $value)
@@ -673,14 +698,41 @@ class Corto_ProxyServer
         session_start();
     }
 
-
-    public function getLogger()
+    /**
+     * @return Corto_Log_Interface
+     */
+    public function getSystemLog()
     {
+        if (!isset($this->_systemLog)) {
+            $this->_systemLog = new Corto_Log_Dummy();
+        }
 
+        return $this->_systemLog;
     }
 
-    public function setLogger()
+    public function getSessionLog()
     {
-        
+        if (isset($this->_sessionLog)) {
+            return $this->_sessionLog;
+        }
+
+        if (!isset($this->_sessionLogDefault)) {
+            $this->_sessionLogDefault = new Corto_Log_Dummy();
+        }
+
+        $sessionLog = $this->_sessionLogDefault;
+        $sessionLog->setId(session_id());
+        $this->_sessionLog =$sessionLog;
+        return $this->_sessionLog;
+    }
+
+    public function setSystemLog(Corto_Log_Interface $log)
+    {
+        $this->_systemLog = $log;
+    }
+
+    public function setSessionLogDefault($logDefault)
+    {
+        $this->_sessionLogDefault = $logDefault;
     }
 }
