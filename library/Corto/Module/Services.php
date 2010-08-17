@@ -6,6 +6,9 @@ class Corto_Module_Services_Exception extends Corto_ProxyServer_Exception
 
 class Corto_Module_Services extends Corto_Module_Abstract
 {
+    const DEFAULT_REQUEST_BINDING  = 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect';
+    const DEFAULT_RESPONSE_BINDING = 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Post';
+
     /**
      * Handle a Single Sign On request (Authentication Request)
      */
@@ -58,13 +61,13 @@ class Corto_Module_Services extends Corto_Module_Abstract
         // and send the new authnrequest
         $presetIdPs = $this->_server->getCurrentEntitySetting('IdPList');
         if ($presetIdP && $presetIdPs) {
-            $this->_server->getSessionLog()->debug("SSO: Preset idp and idpList found");
+            $this->_server->getSessionLog()->debug("SSO: Preset idp and idpList found: '$presetIdP'");
             return $this->_server->sendAuthenticationRequest($request, $presetIdP, $presetIdPs);
         }
 
         // If we have an IdP configured then we send the authentication request to that IdP
         if ($presetIdP) {
-            $this->_server->getSessionLog()->debug("SSO: Preset idp found");
+            $this->_server->getSessionLog()->debug("SSO: Preset idp found: '$presetIdP'");
             return $this->_server->sendAuthenticationRequest($request, $presetIdP);
         }
 
@@ -82,8 +85,9 @@ class Corto_Module_Services extends Corto_Module_Abstract
 
         // More than 1 candidate found, send authentication request to the first one
         if (count($candidateIDPs) === 1) {
-            $this->_server->getSessionLog()->debug("SSO: Only 1 candidate IdP");
             $idp = $candidateIDPs[0];
+
+            $this->_server->getSessionLog()->debug("SSO: Only 1 candidate IdP: $idp");
             return $this->_server->sendAuthenticationRequest($request, $idp);
         }
 
@@ -94,7 +98,7 @@ class Corto_Module_Services extends Corto_Module_Abstract
             return $this->_server->sendResponse($request, $response);
         }
 
-        // > 1 IdPs found, but isPassive attribute given, unable to respond
+        // > 1 IdPs found, but isPassive attribute given, unable to continue
         if (isset($request['_IsPassive']) && $request['_IsPassive'] === 'true') {
             $this->_server->getSessionLog()->debug("SSO: IsPassive with multiple IdPs!");
             $response = $this->_server->createErrorResponse($request, 'NoPassive');
@@ -112,7 +116,7 @@ class Corto_Module_Services extends Corto_Module_Abstract
 
     protected function showWayf($request, $candidateIdPs)
     {
-        // Post to the 'continueToIdpService'
+        // Post to the 'continueToIdp' service
         $action = $this->_server->getCurrentEntityUrl('continueToIdP');
 
         $requestIssuer = $request['saml:Issuer']['__v'];
@@ -133,7 +137,8 @@ class Corto_Module_Services extends Corto_Module_Abstract
     public function continueToIdP()
     {
         // Retrieve the request from the session.
-        $request = $_SESSION[$_POST['ID']]['hSAMLRequest'];
+        $id      = $_POST['ID'];
+        $request = $_SESSION[$id]['SAMLRequest'];
         
         $this->_server->sendAuthenticationRequest($request, $_REQUEST['idp']);
     }
@@ -183,14 +188,135 @@ class Corto_Module_Services extends Corto_Module_Abstract
             'samlp:ArtifactResponse' => array(
                 'xmlns:samlp' => 'urn:oasis:names:tc:SAML:2.0:protocol',
                 'xmlns:saml' => 'urn:oasis:names:tc:SAML:2.0:assertion',
-                'ID' => $this->_server->getNewId(),
-                'Version' => '2.0',
-                'IssueInstant' => $this->_server->timeStamp(),
-                'InResponseTo' => $postData['SOAP-ENV:Body']['samlp:ArtifactResolve']['_ID'],
-                'saml:Issuer' => array('__v' => $GLOBALS['meta']['EntityID']),
+                'ID'            => $this->_server->getNewId(),
+                'Version'       => '2.0',
+                'IssueInstant'  => $this->_server->timeStamp(),
+                'InResponseTo'  => $postData['SOAP-ENV:Body']['samlp:ArtifactResolve']['_ID'],
+
+                'saml:Issuer' => array('__v' => $this->_server->getCurrentEntityUrl()),
                 $element => $message,
             ),
         );
         $this->_server->getBindingsModule()->_soapResponse($artifactResponse);
+    }
+
+    public function idPMetadataService()
+    {
+        $entityDescriptor = array(
+            '_xmlns:md' => 'urn:oasis:names:tc:SAML:2.0:metadata',
+            'md:EntityDescriptor' => array(
+                '_validUntil' => $this->_server->timeStamp(strtotime('tomorrow') - time()),
+                '_entityID' => $this->_server->getCurrentEntityUrl('idPMetadataService'),
+                'md:IDPSSODescriptor' => array(
+                    '_protocolSupportEnumeration' => "urn:oasis:names:tc:SAML:2.0:protocol",
+                    'md:NameIDFormat' => array('__v' => 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient'),
+                    'md:SingleSignOnService' => array(
+                        '_Binding'  => self::DEFAULT_REQUEST_BINDING,
+                        '_Location' => $this->_server->getCurrentEntityUrl('singleSignOnService'),
+                    ),
+                ),
+            )
+        );
+
+        $certificates = $this->_server->getCurrentEntitySetting('certificates', array());
+        if (isset($certificates['public'])) {
+            $entityDescriptor['md:IDPSSODescriptor']['md:KeyDescriptor'] = array(
+                array(
+                    '_xmlns:ds' => 'http://www.w3.org/2000/09/xmldsig#',
+                    '_use' => 'signing',
+                    'ds:KeyInfo' => array(
+                        'ds:X509Data' => array(
+                            'ds:X509Certificate' => array(
+                                '__v' => $certificates['public'],
+                            ),
+                        ),
+                    ),
+                ),
+                array(
+                    '_xmlns:ds' => 'http://www.w3.org/2000/09/xmldsig#',
+                    '_use' => 'encryption',
+                    'ds:KeyInfo' => array(
+                        'ds:X509Data' => array(
+                            'ds:X509Certificate' => array(
+                                '__v' => $certificates['public'],
+                            ),
+                        ),
+                    ),
+                ),
+            );
+        }
+
+
+        $xml = Corto_XmlToArray::array2xml($entityDescriptor, 'md:EntitiesDescriptor', true);
+        if ($this->_server->getConfig('debug', false)) {
+            $dom = new DOMDocument();
+            $dom->loadXML($xml);
+            if (!$dom->schemaValidate('http://docs.oasis-open.org/security/saml/v2.0/saml-schema-metadata-2.0.xsd')) {
+                throw new Exception('Metadata XML doesnt validate against XSD at Oasis-open.org?!');
+            }
+        }
+        header('Content-Type: application/xml');
+        //header('Content-Type: application/samlmetadata+xml');
+        print $xml;
+    }
+
+    public function sPMetadataService()
+    {
+        $entityDescriptor = array(
+            '_xmlns:md' => 'urn:oasis:names:tc:SAML:2.0:metadata',
+            'md:EntityDescriptor' => array(
+                '_validUntil' => $this->_server->timeStamp(strtotime('tomorrow') - time()),
+                '_entityID' => $this->_server->getCurrentEntityUrl('sPMetadataService'),
+                'md:SPSSODescriptor' => array(
+                    'md:NameIDFormat' => array('__v' => 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient'),
+                    'md:AssertionConsumerService' => array(
+                        '_Binding'  => self::DEFAULT_RESPONSE_BINDING,
+                        '_Location' => $this->_server->getCurrentEntityUrl('assertionConsumerService'),
+                        '_index' => '1',
+                    ),
+                ),
+            )
+        );
+
+        $certificates = $this->_server->getCurrentEntitySetting('certificates', array());
+        if (isset($certificates['public'])) {
+            $entityDescriptor['md:IDPSSODescriptor']['md:KeyDescriptor'] = array(
+                array(
+                    '_xmlns:ds' => 'http://www.w3.org/2000/09/xmldsig#',
+                    '_use' => 'signing',
+                    'ds:KeyInfo' => array(
+                        'ds:X509Data' => array(
+                            'ds:X509Certificate' => array(
+                                '__v' => $certificates['public'],
+                            ),
+                        ),
+                    ),
+                ),
+                array(
+                    '_xmlns:ds' => 'http://www.w3.org/2000/09/xmldsig#',
+                    '_use' => 'encryption',
+                    'ds:KeyInfo' => array(
+                        'ds:X509Data' => array(
+                            'ds:X509Certificate' => array(
+                                '__v' => $certificates['public'],
+                            ),
+                        ),
+                    ),
+                ),
+            );
+        }
+
+
+        $xml = Corto_XmlToArray::array2xml($entityDescriptor, 'md:EntitiesDescriptor', true);
+        if ($this->_server->getConfig('debug', false)) {
+            $dom = new DOMDocument();
+            $dom->loadXML($xml);
+            if (!$dom->schemaValidate('http://docs.oasis-open.org/security/saml/v2.0/saml-schema-metadata-2.0.xsd')) {
+                throw new Exception('Metadata XML doesnt validate against XSD at Oasis-open.org?!');
+            }
+        }
+        header('Content-Type: application/xml');
+        //header('Content-Type: application/samlmetadata+xml');
+        print $xml;
     }
 }

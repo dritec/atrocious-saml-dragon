@@ -10,7 +10,7 @@ class Corto_ProxyServer_Exception extends Exception
 }
 
 class Corto_ProxyServer
-{
+{    
     const MODULE_BINDINGS   = 'Bindings';
     const MODULE_SERVICES   = 'Services';
 
@@ -142,7 +142,7 @@ class Corto_ProxyServer
 
     public function getCurrentEntityUrl($serviceName = "", $remoteEntityId = "")
     {
-        return $this->getHostedEntityUrl($serviceName, $this->_entities['current']['EntityCode'], $remoteEntityId);
+        return $this->getHostedEntityUrl($this->_entities['current']['EntityCode'], $serviceName, $remoteEntityId);
     }
 
     public function getCurrentEntitySetting($name, $default = null)
@@ -168,7 +168,7 @@ class Corto_ProxyServer
         }
 
         if (!$serviceName) {
-            return $scheme . '://' . $host . ($this->_hostedPath ? $this->_hostedPath : ''). $entityPart;
+            return $scheme . '://' . $host . ($this->_hostedPath ? $this->_hostedPath : '') . $entityPart;
         }
 
         return $scheme . '://' . $host . ($this->_hostedPath ? $this->_hostedPath : '') . $entityPart . '/' . $serviceName;
@@ -219,7 +219,7 @@ class Corto_ProxyServer
 
         $this->getSessionLog()->debug("Calling service '$serviceName'");
         $this->getServicesModule()->$serviceName();
-        $this->getSessionLog()->debug("Done calling service");
+        $this->getSessionLog()->debug("Done calling service '$serviceName'");
     }
 
     protected function _setCurrentEntity($entityCode, $remoteIdPMd5 = "")
@@ -256,7 +256,7 @@ class Corto_ProxyServer
         );
 
         if ($uri) {
-            // From corto.php/hostedEntity/requestedService get the hosted entity code and the requested service
+            // From /hostedEntity/requestedService get the hosted entity code and the requested service
             $entityCodeAndService = preg_split('/\//', $uri, 0, PREG_SPLIT_NO_EMPTY);
             if (isset($entityCodeAndService[0])) {
                 // From the hosted entity name like entity name_myidp, get a hosted IDP identifier (myIdp in the example).
@@ -418,13 +418,6 @@ class Corto_ProxyServer
             ),
         );
 
-        $extraEncryptedAttributes = $this->getEncryptionModule()->encryptElement(
-            $GLOBALS['certificates'][$this->_entities['current']['EntityID']]['public'],
-            $extraAttributes,
-            'saml:EncryptedAttribute'
-        );
-        $response['saml:Assertion']['saml:AttributeStatement']['saml:EncryptedAttribute'][] = $extraEncryptedAttributes;
-
         return $response;
     }
 
@@ -496,7 +489,7 @@ class Corto_ProxyServer
     {
         $originalId = $request['_ID'];
 
-        $newRequest = $this->createRequest($idp, $scope);
+        $newRequest = $this->createEnhancedRequest($request, $idp, $scope);
         $newId = $newRequest['_ID'];
 
         // Store the original Request
@@ -505,6 +498,81 @@ class Corto_ProxyServer
         $_SESSION[$newId]['_InResponseTo'] = $originalId;
 
         $this->getBindingsModule()->send($newRequest, $this->_entities['remote'][$idp]);
+    }
+
+    /**
+     *
+     *
+     * @param string $idp
+     * @param array|null $scoping
+     * @return array
+     */
+    public function createEnhancedRequest($originalRequest, $idp, array $scoping = null)
+    {
+        $remoteMetaData = $this->_entities['remote'][$idp];
+
+        $request = array(
+            Corto_XmlToArray::TAG_NAME_KEY       => 'samlp:AuthnRequest',
+            Corto_XmlToArray::PRIVATE_KEY_PREFIX => array(
+                'paramname'         => 'SAMLRequest',
+                'destinationid'     => $idp,
+                'ProtocolBinding'   => $remoteMetaData['SingleSignOnService']['Binding'],
+            ),
+            '_xmlns:saml'                       => 'urn:oasis:names:tc:SAML:2.0:assertion',
+            '_xmlns:samlp'                      => 'urn:oasis:names:tc:SAML:2.0:protocol',
+
+            '_ID'                               => $this->getNewId(),
+            '_Version'                          => '2.0',
+            '_IssueInstant'                     => $this->timeStamp(),
+            '_Destination'                      => $remoteMetaData['SingleSignOnService']['Location'],
+            '_ForceAuthn'                       => ($originalRequest['_ForceAuthn'] == 'true') ? 'true' : 'false',
+            '_IsPassive'                        => ($originalRequest['_IsPassive']  == 'true') ? 'true' : 'false',
+
+            // Send the response to us.
+            '_AssertionConsumerServiceURL'      => $this->getCurrentEntityUrl('assertionConsumeUrl'),
+            '_ProtocolBinding'                  => 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST',
+
+            '_AttributeConsumingServiceIndex'   => $originalRequest['_AttributeConsumingServiceIndex'],
+
+            'saml:Issuer' => array('__v' => $this->_entities['current']['EntityID']),
+            'ds:Signature' => '__placeholder__',
+            'samlp:NameIDPolicy' => array(
+                '_Format' => 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient',
+                '_AllowCreate' => 'true',
+            ),
+        );
+
+        if ($scoping) {
+            $scoping = (array) $scoping;
+            foreach ($scoping as $scopedIdP) {
+                $request['samlp:Scoping']['samlp:IDPList']['samlp:IDPEntry'][] = array('_ProviderID' => $scoping);
+            }
+            return $request;
+        }
+
+        // Copy original scoping rules
+        if (isset($originalRequest['samlp:Scoping'])) {
+            $request['samlp:Scoping'] = $originalRequest['samlp:Scoping'];
+        }
+        else {
+            $request['samlp:Scoping'] = array();
+        }
+
+        // Decrease or initialize the proxycount
+        if (isset($originalRequest['samlp:Scoping']['_ProxyCount'])) {
+            $request['samlp:Scoping']['_ProxyCount']--;
+        }
+        else {
+            $request['samlp:Scoping']['_ProxyCount'] = $this->getConfig('max_proxies', 10);
+        }
+
+        // Add ourselves as requester
+        if (!isset($request['samlp:Scoping']['samlp:RequesterID'])) {
+            $request['samlp:Scoping']['samlp:RequesterID'] = array();
+        }
+        $request['samlp:Scoping']['samlp:RequesterID'][] = array('__v' => $originalRequest['saml:Issuer']['__v']);
+
+        return $request;
     }
 
     ////////  ATTRIBUTE FILTERING /////////
@@ -672,7 +740,7 @@ class Corto_ProxyServer
      * @param int $deltaSeconds
      * @return string
      */
-    protected function timeStamp($deltaSeconds = 0)
+    public function timeStamp($deltaSeconds = 0)
     {
         return gmdate('Y-m-d\TH:i:s\Z', time() + $deltaSeconds);
     }

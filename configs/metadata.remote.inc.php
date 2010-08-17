@@ -12,17 +12,17 @@
  *
  * - spfilter
  *
- * - AssertionConsumerServiceLocation
+ * - AssertionConsumerService
  * For SPs: Location where the SAML2 Response Assertion should be sent to
  * (note that because we are a proxy we don't care about binding, if we're given an assertion with HTTP-POST,
  * then we send it with HTTP-POST)
  *
- * - SingleSignOnServiceLocation
+ * - SingleSignOnService
  * For IdPs: Location where the SAML2 Authntication Request should be sent to
  * (note that because we are a proxy we don't care about binding, if we're given an request with HTTP-Redirect,
  * then we send it with HTTP-Redirect)
  *
- * - ArtifactResolutionServiceLocation
+ * - ArtifactResolutionService
  * Location where SAML2 Artifacts can be resolved.
  *
  * - filter

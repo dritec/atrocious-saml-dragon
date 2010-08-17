@@ -224,6 +224,55 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         $isPassive = $isPassive == 'true' || $isPassive == '1';
     }
 
+    protected function _encryptElement($publicKey, $element, $tag = null)
+    {
+        if ($tag) {
+            $element['__t'] = $tag;
+        }
+        $data = Corto_XmlToArray::array2xml($element);
+        $cipher = mcrypt_module_open(MCRYPT_RIJNDAEL_128, '', 'cbc', '');
+        $iv = mcrypt_create_iv(mcrypt_enc_get_iv_size($cipher), MCRYPT_DEV_URANDOM);
+        $sessionkey = mcrypt_create_iv(mcrypt_enc_get_key_size($cipher), MCRYPT_DEV_URANDOM);
+        mcrypt_generic_init($cipher, $sessionkey, $iv);
+        $encryptedData = $iv . mcrypt_generic($cipher, $data);
+        mcrypt_generic_deinit($cipher);
+        mcrypt_module_close($cipher);
+
+        $publicKey = openssl_pkey_get_public($publicKey);
+        openssl_public_encrypt($sessionkey, $encryptedKey, $publicKey, OPENSSL_PKCS1_PADDING);
+        openssl_free_key($publicKey);
+
+        $encryptedElement = array(
+            'xenc:EncryptedData' => array(
+                '_xmlns:xenc' => 'http://www.w3.org/2001/04/xmlenc#',
+                '_Type' => 'http://www.w3.org/2001/04/xmlenc#Element',
+                'ds:KeyInfo' => array(
+                    '_xmlns:ds' => "http://www.w3.org/2000/09/xmldsig#",
+                    'xenc:EncryptedKey' => array(
+                        '_Id' => ID(),
+                        'xenc:EncryptionMethod' => array(
+                            '_Algorithm' => "http://www.w3.org/2001/04/xmlenc#rsa-1_5"
+                        ),
+                        'xenc:CipherData' => array(
+                            'xenc:CipherValue' => array(
+                                '__v' => base64_encode($encryptedKey),
+                            ),
+                        ),
+                    ),
+                ),
+                'xenc:EncryptionMethod' => array(
+                    '_Algorithm' => 'http://www.w3.org/2001/04/xmlenc#aes128-cbc',
+                ),
+                'xenc:CipherData' => array(
+                    'xenc:CipherValue' => array(
+                        '__v' => base64_encode($encryptedData),
+                    ),
+                ),
+            ),
+        );
+        return $encryptedElement;
+    }
+
     protected function _decryptResponse(array $response)
     {
         if (isset($response['saml:EncryptedAssertion'])) {
