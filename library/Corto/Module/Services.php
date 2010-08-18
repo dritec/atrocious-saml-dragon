@@ -250,7 +250,7 @@ class Corto_Module_Services extends Corto_Module_Abstract
 
 
         $xml = Corto_XmlToArray::array2xml($entityDescriptor, 'md:EntitiesDescriptor', true);
-        if ($this->_server->getConfig('debug', false)) {
+        if ($this->_server->getConfig('debug', false) && ini_get('allow_url_fopen')) {
             $dom = new DOMDocument();
             $dom->loadXML($xml);
             if (!$dom->schemaValidate('http://docs.oasis-open.org/security/saml/v2.0/saml-schema-metadata-2.0.xsd')) {
@@ -310,7 +310,7 @@ class Corto_Module_Services extends Corto_Module_Abstract
 
 
         $xml = Corto_XmlToArray::array2xml($entityDescriptor, 'md:EntitiesDescriptor', true);
-        if ($this->_server->getConfig('debug', false)) {
+        if ($this->_server->getConfig('debug', false) && ini_get('allow_url_fopen')) {
             $dom = new DOMDocument();
             $dom->loadXML($xml);
             if (!$dom->schemaValidate('http://docs.oasis-open.org/security/saml/v2.0/saml-schema-metadata-2.0.xsd')) {
