@@ -16,7 +16,6 @@ class Corto_Module_Services extends Corto_Module_Abstract
     {
         $request = $this->_server->getBindingsModule()->receiveRequest();
 
-
         // Add the hosted IdP as a scoped IdP
         $scopedIDPs = array();
         $presetIdP = $this->_server->getConfig('idp');
@@ -257,9 +256,9 @@ class Corto_Module_Services extends Corto_Module_Abstract
                 throw new Exception('Metadata XML doesnt validate against XSD at Oasis-open.org?!');
             }
         }
-        header('Content-Type: application/xml');
-        //header('Content-Type: application/samlmetadata+xml');
-        print $xml;
+        $this->_server->sendHeader('Content-Type', 'application/xml');
+        //$this->_server->sendHeader('Content-Type', 'application/samlmetadata+xml');
+        $this->_server->sendOutput($xml);
     }
 
     public function sPMetadataService()
@@ -317,8 +316,8 @@ class Corto_Module_Services extends Corto_Module_Abstract
                 throw new Exception('Metadata XML doesnt validate against XSD at Oasis-open.org?!');
             }
         }
-        header('Content-Type: application/xml');
-        //header('Content-Type: application/samlmetadata+xml');
-        print $xml;
+        $this->_server->sendHeader('Content-Type', 'application/xml');
+        //$this->_server->sendHeader('Content-Type', 'application/samlmetadata+xml');
+        $this->_server->sendOutput($xml);
     }
 }
