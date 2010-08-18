@@ -36,23 +36,23 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
     public function receiveRequest()
     {
         $request = $this->_receiveMessage(self::KEY_REQUEST);
-        $this->_server->getSessionLog()->debug("Received request: " . var_export($request['Message'], true));
+        $this->_server->getSessionLog()->debug("Received request: " . var_export($request, true));
 
         $this->_verifyRequest($request);
         $this->_c14nRequest($request);
 
-        return $request['Message'];
+        return $request;
     }
 
     public function receiveResponse()
     {
         $response = $this->_receiveMessage(self::KEY_RESPONSE);
-        $this->_server->getSessionLog()->debug("Received response: " . var_export($response['Message'], true));
+        $this->_server->getSessionLog()->debug("Received response: " . var_export($response, true));
 
         $this->_decryptResponse($response);
         $this->_verifyResponse($response);
         
-        return $response['Message'];
+        return $response;
     }
 
     protected function _receiveMessage($key)
@@ -144,10 +144,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         $relayState = $_REQUEST['RelayState'];
         $message[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['RelayState'] = $relayState;
 
-        return array(
-            'Message'    => $message,
-            'RelayState' => $relayState,
-        );
+        return $message;
     }
 
     protected function _receiveMessageFromHttpPost($key)
@@ -161,12 +158,9 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         
         $relayState     = $_POST['RelayState'];
         $messageArray[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['RelayState'] = $relayState;
+        $messageArray[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['Raw'] = $message;
         
-        return array(
-            'Message'    => $messageArray,
-            'MessageRaw' => $message,
-            'RelayState' => $relayState
-        );
+        return $messageArray;
     }
 
     protected function _receiveMessageFromHttpRedirect($key)
@@ -184,20 +178,14 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
             $messageArray[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['RelayState'] = $relayState;
         }
 
-        $signature = "";
-        $signingAlgorithm = "";
         if (isset($_GET['Signature'])) {
-            $signature          = $_GET['Signature'];
-            $signingAlgorithm   = $_GET['SigAlg'];
+            $messageArray[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['Signature']        = $_GET['Signature'];
+            $messageArray[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['SigningAlgorithm'] = $_GET['SigAlg'];
         }
 
-        return array(
-            'Message'           => $messageArray,
-            'MessageRaw'        => $message,
-            'RelayState'        => $relayState,
-            'Signature'         => $signature,
-            'SigningAlgorithm'  => $signingAlgorithm,
-        );
+        $messageArray[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['Raw'] = $message;
+
+        return $messageArray;
     }
 
     protected function _getArrayFromReceivedMessage($message)
@@ -339,18 +327,18 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
 
     protected function _verifyResponse(array $response)
     {
-        $this->_verifyKnownIssuer($response['Message']);
+        $this->_verifyKnownIssuer($response);
 
         if ($this->_server->getCurrentEntitySetting('WantsAssertionsSigned', true)) {
-            $this->_verifySignatureMessage($response['Message'], self::KEY_RESPONSE);
+            $this->_verifySignatureMessage($response, self::KEY_RESPONSE);
         }
-        $this->_verifyMessageDestinedForUs($response['Message']);
+        $this->_verifyMessageDestinedForUs($response);
         $this->_verifyTimings($response);
     }
 
     protected function _verifySignature(array $message, $key)
     {
-        if (isset($message['Signature'])) { // We got a Signature in the URL (HTTP Redirect)
+        if (isset($message['__']['Signature'])) { // We got a Signature in the URL (HTTP Redirect)
             return $this->_verifySignatureMessage($message, $key);
         }
 
@@ -364,8 +352,8 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
 
         $messageVerified = $this->_verifySignatureXMLElement(
             $remoteEntity['certificates']['public'],
-            $message['MessageRaw'],
-            $message['Message']
+            $message['__']['Raw'],
+            $message
         );
 
         if (!isset($message['Message']['saml:Assertion'])) {
@@ -374,8 +362,8 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
 
         $assertionVerified = $this->_verifySignatureXMLElement(
             $remoteEntity['certificates']['public'],
-            $message['MessageRaw'],
-            $message['Message']['saml:Assertion']
+            $message['__']['Raw'],
+            $message['saml:Assertion']
         );
         return ($messageVerified || $assertionVerified);
     }
