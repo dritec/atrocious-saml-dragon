@@ -71,8 +71,6 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         if (!empty($message)) {
             return $message;
         }
-
-        throw new Corto_Module_Bindings_Exception("Unable to receive message '$key'");
     }
 
     protected function _receiveMessageFromArtifact($key)
@@ -84,6 +82,19 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         $artifacts = base64_decode($_REQUEST[self::KEY_ARTIFACT]);
         $artifacts = unpack(self::ARTIFACT_BINARY_FORMAT, $artifacts);
 
+        switch ($key) {
+            case self::KEY_REQUEST:
+                // Trying to get an artifact from an SP, identify ourselves as an idp
+                $issuer = $this->_server->getCurrentEntityUrl('idPMetadataService');
+                break;
+            case self::KEY_RESPONSE:
+                // Trying to get an artifact from an IdP, identify ourselves as a sp
+                $issuer = $this->_server->getCurrentEntityUrl('sPMetadataService');
+                break;
+            default:
+                throw new Corto_Module_Bindings_Exception("Unknown message type '$key'");
+        }
+
         $artifactResolveMessage = array(
             'samlp:ArtifactResolve' => array(
                 '_xmlns:samlp' => 'urn:oasis:names:tc:SAML:2.0:protocol',
@@ -93,7 +104,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
                 '_IssueInstant' => $this->_server->timeStamp(),
 
                 'saml:Artifact' => array('__v' => $_REQUEST['SAMLArt']),
-                'saml:Issuer'   => array('__v' => $this->_server->getCurrentEntityUrl()),
+                'saml:Issuer'   => array('__v' => $issuer),
             ),
         );
 
@@ -201,18 +212,26 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
 
     protected function _verifyRequest(array $request)
     {
+        $this->_verifyKnownIssuer($request['Message']);
+
         $requestIssuer = $request['Message']['saml:Issuer']['__v'];
         $remoteEntity = $this->_server->getRemoteEntity($requestIssuer);
-        if ($remoteEntity===null) {
-            throw new Corto_Module_Bindings_Exception("Request Issuer '{$requestIssuer}' is not a known remote entity? (please add SP to Remote Entities)");
-        }
-
+        
         if ((isset($remoteEntity['AuthnRequestsSigned']) && $remoteEntity['AuthnRequestsSigned']) ||
             ($this->_server->getCurrentEntitySetting('WantsAuthnRequestsSigned', false))) {
-            $this->_verifySignatureMessage($request, self::KEY_REQUEST);
+            $this->_verifySignatureMessage($request['Message'], self::KEY_REQUEST);
         }
         
         $this->_verifyMessageDestinedForUs($request['Message']);
+    }
+
+    protected function _verifyKnownIssuer($message)
+    {
+        $messageIssuer = $message['saml:Issuer']['__v'];
+        $remoteEntity = $this->_server->getRemoteEntity($messageIssuer);
+        if ($remoteEntity===null) {
+            throw new Corto_Module_Bindings_Exception("Issuer '{$messageIssuer}' is not a known remote entity? (please add SP/IdP to Remote Entities)");
+        }
     }
 
     protected function _c14nRequest(array $request)
@@ -249,7 +268,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
                 'ds:KeyInfo' => array(
                     '_xmlns:ds' => "http://www.w3.org/2000/09/xmldsig#",
                     'xenc:EncryptedKey' => array(
-                        '_Id' => ID(),
+                        '_Id' => $this->_server->getNewId(),
                         'xenc:EncryptionMethod' => array(
                             '_Algorithm' => "http://www.w3.org/2001/04/xmlenc#rsa-1_5"
                         ),
@@ -320,8 +339,10 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
 
     protected function _verifyResponse(array $response)
     {
+        $this->_verifyKnownIssuer($response['Message']);
+
         if ($this->_server->getCurrentEntitySetting('WantsAssertionsSigned', true)) {
-            $this->_verifySignatureMessage($response, self::KEY_RESPONSE);
+            $this->_verifySignatureMessage($response['Message'], self::KEY_RESPONSE);
         }
         $this->_verifyMessageDestinedForUs($response['Message']);
         $this->_verifyTimings($response);
@@ -336,6 +357,10 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         // Otherwise it's in the message or in the assertion in the message (HTTP Post Response)
         $messageIssuer = $message['saml:Issuer']['__v'];
         $remoteEntity = $this->_server->getRemoteEntity($messageIssuer);
+
+        if (!isset($remoteEntity['certificates']['public'])) {
+            throw new Corto_Module_Bindings_VerificationException("No public key known for $messageIssuer");
+        }
 
         $messageVerified = $this->_verifySignatureXMLElement(
             $remoteEntity['certificates']['public'],
@@ -368,6 +393,11 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         $messageIssuer = $message['saml:Issuer']['__v'];
         $remoteEntity = $this->_server->getRemoteEntity($messageIssuer);
 
+        if (!isset($remoteEntity['certificates']['public'])) {
+            throw new Corto_Module_Bindings_VerificationException("No public key known for $messageIssuer");
+        }
+
+        var_dump($remoteEntity['certificates']['public']);
         $verified = openssl_verify(
             $queryString,
             base64_decode($message['Signature']),
@@ -501,7 +531,12 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
     public function send($message, $remoteEntity)
     {
         $bindingUrn = $message['__']['ProtocolBinding'];
+
+        if (!isset($this->_bindings[$bindingUrn])) {
+            throw new Corto_Module_Bindings_Exception('Unknown binding: '. $bindingUrn);
+        }
         $function = $this->_bindings[$bindingUrn];
+
         
         $this->$function($message, $remoteEntity);
     }
@@ -515,6 +550,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
                                 $this->_server->getCurrentEntitySetting('AuthnRequestsSigned'));
         $mustSign = ($messageType===self::KEY_REQUEST && !$wantRequestsSigned);
         if ($mustSign) {
+            $this->_server->getSessionLog()->debug("HTTP-Redirect: Removing signature");
             unset($message['ds:Signature']);
         }
 
@@ -543,9 +579,11 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         if (isset($remoteEntity['SharedKey'])) {
             $queryString .= "&Signature=" . urlencode(base64_encode(sha1($remoteEntity['SharedKey'] . sha1($queryString))));
         } elseif ($mustSign) {
+            $this->_server->getSessionLog()->debug("HTTP-Redirect: (Re-)Signing");
             $queryString .= '&SigAlg=' . urlencode($this->_server->getConfig('SigningAlgorithm'));
 
-            $key = openssl_pkey_get_private($GLOBALS['certificates'][$GLOBALS['meta']['EntityID']]['private']);
+            $privateKey = $this->_getCurrentEntityPrivateKey();
+            $key = openssl_pkey_get_private($privateKey);
             $signature = "";
             openssl_sign($queryString, $signature, $key);
             openssl_free_key($key);
@@ -561,6 +599,15 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         $this->_server->redirect($location, $message);
     }
 
+    protected function _getCurrentEntityPrivateKey()
+    {
+        $certificates = $this->_server->getCurrentEntitySetting('certificates', array());
+        if (!isset($certificates['private'])) {
+            throw new Corto_Module_Bindings_Exception('Current entity has no private key, unable to sign message! Please set ["certificates"]["private"]!');
+        }
+        return $certificates['private'];
+    }
+
     protected function _sendHTTPPost($message, $remoteEntity)
     {
         $name = $message['__']['paramname'];
@@ -574,20 +621,23 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
             $extra .= '<input type="hidden" name="Signature" value="' . $signatureHTMLValue . '">';
 
         } else {
-            if ($name == 'SAMLRequest' && ($remoteEntity['WantsAuthnRequestsSigned'] || $GLOBALS['meta']['AuthnRequestsSigned'])) {
+            if ($name == 'SAMLRequest' && ($remoteEntity['WantsAuthnRequestsSigned'] || $this->_server->getCurrentEntitySetting('AuthnRequestsSigned'))) {
+                $this->_server->getSessionLog()->debug("HTTP-Redirect: (Re-)Signing");
                 $message = $this->_sign(
-                    $GLOBALS['certificates'][$GLOBALS['meta']['entitycode']]['private'],
+                    $this->_getCurrentEntityPrivateKey(),
                     $message
                 );
             }
             else if ($name == 'SAMLResponse' && isset($remoteEntity['WantsAssertionsSigned']) && $remoteEntity['WantsAssertionsSigned']) {
+                $this->_server->getSessionLog()->debug("HTTP-Redirect: (Re-)Signing Assertion");
+
                 $message['saml:Assertion']['__t'] = 'saml:Assertion';
                 $message['saml:Assertion']['_xmlns:saml'] = "urn:oasis:names:tc:SAML:2.0:assertion";
                 unset($message['saml:Assertion']['ds:Signature']);
                 ksort($message['saml:Assertion']);
 
                 $message['saml:Assertion'] = $this->_sign(
-                    $GLOBALS['certificates'][$GLOBALS['meta']['EntityID']]['private'],
+                    $this->_getCurrentEntityPrivateKey(),
                     $message['saml:Assertion']
                 );
                 ksort($message['saml:Assertion']);
@@ -595,8 +645,9 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
 
             }
             else if ($name == 'SAMLResponse' && isset($remoteEntity['WantsResponsesSigned']) && $remoteEntity['WantsResponsesSigned']) {
+                $this->_server->getSessionLog()->debug("HTTP-Redirect: (Re-)Signing");
                 $message = $this->_sign(
-                    $GLOBALS['certificates'][$GLOBALS['meta']['EntityID']]['private'],
+                    $this->_getCurrentEntityPrivateKey(),
                     $message
                 );
             }
@@ -608,6 +659,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         $encodedMessage = htmlspecialchars(base64_encode($encodedMessage));
 
         $action = $message['_Destination'] . (isset($message['_Recipient'])?$message['_Recipient']:'');
+        $this->_server->getSessionLog()->debug("HTTP-Post: Sending Message: " . var_export($message, true));
         $output = $this->_server->renderTemplate(
             'form',
             array(
@@ -615,7 +667,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
                 'message' => $encodedMessage,
                 'xtra' => $extra,
                 'name' => $name,
-                'trace' => '',//$this->_server->debugRequest($action, $message),
+                'trace' => $this->_server->getConfig('debug', false),//$this->_server->debugRequest($action, $message),
         ));
         $this->_server->sendOutput($output);
     }

@@ -136,11 +136,13 @@ class Corto_Module_Services extends Corto_Module_Abstract
 
     public function continueToIdP()
     {
+        $selectedIdp = $_REQUEST['idp'];
+
         // Retrieve the request from the session.
         $id      = $_POST['ID'];
         $request = $_SESSION[$id]['SAMLRequest'];
         
-        $this->_server->sendAuthenticationRequest($request, $_REQUEST['idp']);
+        $this->_server->sendAuthenticationRequest($request, $selectedIdp);
     }
 
     public function assertionConsumerService()

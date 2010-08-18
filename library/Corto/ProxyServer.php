@@ -312,7 +312,7 @@ class Corto_ProxyServer
         // as the assertion passes through multiple times ???
         $authenticatingAuthorities = &$response['saml:Assertion']['saml:AuthnStatement']['saml:AuthnContext']['saml:AuthenticatingAuthority'];
         foreach ((array) $authenticatingAuthorities as $key => $authenticatingAuthority) {
-            if ($authenticatingAuthority['__v'] == $GLOBALS['meta']['EntityID']) {
+            if ($authenticatingAuthority['__v'] === $this->getCurrentEntityUrl('sPMetadataService')) {
                 unset($authenticatingAuthorities[$key]);
             }
         }
@@ -439,7 +439,7 @@ class Corto_ProxyServer
             '_IssueInstant' => $now,
             '_InResponseTo' => $request['_ID'],
 
-            'saml:Issuer' => array('__v' => $this->getCurrentEntityUrl()),
+            'saml:Issuer' => array('__v' => $this->getCurrentEntityUrl('idPMetadataService')),
             'samlp:Status' => array(
                 'samlp:StatusCode' => array(
                     '_Value' => 'urn:oasis:names:tc:SAML:2.0:status:Success',
@@ -534,7 +534,7 @@ class Corto_ProxyServer
 
             '_AttributeConsumingServiceIndex'   => $originalRequest['_AttributeConsumingServiceIndex'],
 
-            'saml:Issuer' => array('__v' => $this->_entities['current']['EntityID']),
+            'saml:Issuer' => array('__v' => $this->getCurrentEntityUrl('sPMetadataService')),
             'ds:Signature' => '__placeholder__',
             'samlp:NameIDPolicy' => array(
                 '_Format' => 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient',
@@ -752,7 +752,7 @@ class Corto_ProxyServer
 
     protected function startSession()
     {
-        session_set_cookie_params(0, $this->getConfig('cookie_path'), '', $this->getConfig('use_secure_cookies', true));
+        session_set_cookie_params(0, $this->getConfig('cookie_path', '/'), '', $this->getConfig('use_secure_cookies', true));
         session_name($this->_entities['current']['EntityCode']);
         session_start();
     }
