@@ -238,6 +238,7 @@ class Corto_ProxyServer
             foreach ($remoteEntityIds as $remoteEntityId) {
                 if (md5($remoteEntityId) === $remoteIdPMd5) {
                     $hostedEntity['IdP'] = $remoteEntityId;
+                    $hostedEntity['TransparantProxy'] = true;
                     break;
                 }
             }
@@ -304,6 +305,10 @@ class Corto_ProxyServer
     public function createEnhancedResponse($request, $sourceResponse)
     {
         $response = $this->_createBaseResponse($request);
+
+        if ($this->getCurrentEntitySetting('TransparantProxy', false)) {
+            $response['saml:Issuer']['__v'] = $sourceResponse['saml:Issuer']['__v'];
+        }
 
         $response['samlp:Status']   = $sourceResponse['samlp:Status'];
         $response['saml:Assertion'] = $sourceResponse['saml:Assertion'];
@@ -475,6 +480,7 @@ class Corto_ProxyServer
 
         if ($response['samlp:Status']['samlp:StatusCode']['_Value'] == 'urn:oasis:names:tc:SAML:2.0:status:Success') {
             $this->filterOutputAssertionAttributes($response);
+
             return $this->getBindingsModule()->send($response, $sp);
         }
         else {
