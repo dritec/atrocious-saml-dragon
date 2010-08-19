@@ -237,10 +237,14 @@ class Corto_ProxyServer
             $remoteEntityIds = array_keys($this->_entities['remote']);
             foreach ($remoteEntityIds as $remoteEntityId) {
                 if (md5($remoteEntityId) === $remoteIdPMd5) {
-                    $hostedEntity['IdP'] = $remoteEntityId;
+                    $hostedEntity['idp'] = $remoteEntityId;
                     $hostedEntity['TransparantProxy'] = true;
+                    $this->getSessionLog()->debug("Detected pre-selection of $remoteEntityId as IdP, switching to transparant mode");
                     break;
                 }
+            }
+            if (!isset($hostedEntity['IdP'])) {
+                $this->getSessionLog()->warn("Unable to map $remoteIdPMd5 to a remote entity!");
             }
         }
 
@@ -321,7 +325,6 @@ class Corto_ProxyServer
                 unset($authenticatingAuthorities[$key]);
             }
         }
-
         if ($this->getCurrentEntityUrl() !== $sourceResponse['saml:Issuer']['__v']) {
             $authenticatingAuthorities[] = array('__v' => $sourceResponse['saml:Issuer']['__v']);
         }
@@ -516,7 +519,6 @@ class Corto_ProxyServer
     public function createEnhancedRequest($originalRequest, $idp, array $scoping = null)
     {
         $remoteMetaData = $this->_entities['remote'][$idp];
-
         $request = array(
             Corto_XmlToArray::TAG_NAME_KEY       => 'samlp:AuthnRequest',
             Corto_XmlToArray::PRIVATE_KEY_PREFIX => array(

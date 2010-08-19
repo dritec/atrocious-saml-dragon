@@ -18,7 +18,7 @@ class Corto_Module_Services extends Corto_Module_Abstract
 
         // Add the hosted IdP as a scoped IdP
         $scopedIDPs = array();
-        $presetIdP = $this->_server->getConfig('idp');
+        $presetIdP = $this->_server->getCurrentEntitySetting('idp');
         if ($presetIdP) {
             $scopedIDPs[] = $presetIdP;
         }
