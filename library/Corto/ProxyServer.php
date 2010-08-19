@@ -44,7 +44,7 @@ class Corto_ProxyServer
         $this->_server = $this;
     }
 
-    //////// GETTERS / SETTERS /////////
+//////// GETTERS / SETTERS /////////
 
     /**
      * @return Corto_Module_Bindings
@@ -205,7 +205,7 @@ class Corto_ProxyServer
         return $this->_templateSource;
     }
 
-    //////// MAIN /////////
+//////// MAIN /////////
 
     public function serveRequest($uri)
     {
@@ -288,7 +288,99 @@ class Corto_ProxyServer
         return $parameters;
     }
 
-    //////// RESPONSE HANDLING ////////
+////////  REQUEST HANDLING /////////
+
+    public function sendAuthenticationRequest(array $request, $idp, $scope = null)
+    {
+        $originalId = $request['_ID'];
+
+        $newRequest = $this->createEnhancedRequest($request, $idp, $scope);
+        $newId = $newRequest['_ID'];
+
+        // Store the original Request
+        $_SESSION[$originalId]['SAMLRequest'] = $request;
+        // Store the mapping from the new request ID to the original request ID
+        $_SESSION[$newId]['_InResponseTo'] = $originalId;
+
+        $this->getBindingsModule()->send($newRequest, $this->_entities['remote'][$idp]);
+    }
+
+    /**
+     *
+     *
+     * @param string $idp
+     * @param array|null $scoping
+     * @return array
+     */
+    public function createEnhancedRequest($originalRequest, $idp, array $scoping = null)
+    {
+        $remoteMetaData = $this->_entities['remote'][$idp];
+        $request = array(
+            Corto_XmlToArray::TAG_NAME_KEY       => 'samlp:AuthnRequest',
+            Corto_XmlToArray::PRIVATE_KEY_PREFIX => array(
+                'paramname'         => 'SAMLRequest',
+                'destinationid'     => $idp,
+                'ProtocolBinding'   => $remoteMetaData['SingleSignOnService']['Binding'],
+                'Transparant'       => $this->getCurrentEntitySetting('TransparantProxy', false),
+            ),
+            '_xmlns:saml'                       => 'urn:oasis:names:tc:SAML:2.0:assertion',
+            '_xmlns:samlp'                      => 'urn:oasis:names:tc:SAML:2.0:protocol',
+
+            '_ID'                               => $this->getNewId(),
+            '_Version'                          => '2.0',
+            '_IssueInstant'                     => $this->timeStamp(),
+            '_Destination'                      => $remoteMetaData['SingleSignOnService']['Location'],
+            '_ForceAuthn'                       => ($originalRequest['_ForceAuthn'] == 'true') ? 'true' : 'false',
+            '_IsPassive'                        => ($originalRequest['_IsPassive']  == 'true') ? 'true' : 'false',
+
+            // Send the response to us.
+            '_AssertionConsumerServiceURL'      => $this->getCurrentEntityUrl('assertionConsumeUrl'),
+            '_ProtocolBinding'                  => 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST',
+
+            '_AttributeConsumingServiceIndex'   => $originalRequest['_AttributeConsumingServiceIndex'],
+
+            'saml:Issuer' => array('__v' => $this->getCurrentEntityUrl('sPMetadataService')),
+            'ds:Signature' => '__placeholder__',
+            'samlp:NameIDPolicy' => array(
+                '_Format' => 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient',
+                '_AllowCreate' => 'true',
+            ),
+        );
+
+        if ($scoping) {
+            $scoping = (array) $scoping;
+            foreach ($scoping as $scopedIdP) {
+                $request['samlp:Scoping']['samlp:IDPList']['samlp:IDPEntry'][] = array('_ProviderID' => $scoping);
+            }
+            return $request;
+        }
+
+        // Copy original scoping rules
+        if (isset($originalRequest['samlp:Scoping'])) {
+            $request['samlp:Scoping'] = $originalRequest['samlp:Scoping'];
+        }
+        else {
+            $request['samlp:Scoping'] = array();
+        }
+
+        // Decrease or initialize the proxycount
+        if (isset($originalRequest['samlp:Scoping']['_ProxyCount'])) {
+            $request['samlp:Scoping']['_ProxyCount']--;
+        }
+        else {
+            $request['samlp:Scoping']['_ProxyCount'] = $this->getConfig('max_proxies', 10);
+        }
+
+        // Add ourselves as requester
+        if (!isset($request['samlp:Scoping']['samlp:RequesterID'])) {
+            $request['samlp:Scoping']['samlp:RequesterID'] = array();
+        }
+        $request['samlp:Scoping']['samlp:RequesterID'][] = array('__v' => $originalRequest['saml:Issuer']['__v']);
+
+        return $request;
+    }    
+
+//////// RESPONSE HANDLING ////////
 
     public function createErrorResponse($request, $errorStatus)
     {
@@ -310,7 +402,8 @@ class Corto_ProxyServer
     {
         $response = $this->_createBaseResponse($request);
 
-        if ($this->getCurrentEntitySetting('TransparantProxy', false)) {
+        if (isset($request[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['Transparant']) &&
+            $request[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['Transparant']) {
             $response['saml:Issuer']['__v'] = $sourceResponse['saml:Issuer']['__v'];
         }
 
@@ -492,98 +585,7 @@ class Corto_ProxyServer
         }
     }
 
-    ////////  REQUEST HANDLING /////////
-
-    public function sendAuthenticationRequest(array $request, $idp, $scope = null)
-    {
-        $originalId = $request['_ID'];
-
-        $newRequest = $this->createEnhancedRequest($request, $idp, $scope);
-        $newId = $newRequest['_ID'];
-
-        // Store the original Request
-        $_SESSION[$originalId]['SAMLRequest'] = $request;
-        // Store the mapping from the new request ID to the original request ID
-        $_SESSION[$newId]['_InResponseTo'] = $originalId;
-
-        $this->getBindingsModule()->send($newRequest, $this->_entities['remote'][$idp]);
-    }
-
-    /**
-     *
-     *
-     * @param string $idp
-     * @param array|null $scoping
-     * @return array
-     */
-    public function createEnhancedRequest($originalRequest, $idp, array $scoping = null)
-    {
-        $remoteMetaData = $this->_entities['remote'][$idp];
-        $request = array(
-            Corto_XmlToArray::TAG_NAME_KEY       => 'samlp:AuthnRequest',
-            Corto_XmlToArray::PRIVATE_KEY_PREFIX => array(
-                'paramname'         => 'SAMLRequest',
-                'destinationid'     => $idp,
-                'ProtocolBinding'   => $remoteMetaData['SingleSignOnService']['Binding'],
-            ),
-            '_xmlns:saml'                       => 'urn:oasis:names:tc:SAML:2.0:assertion',
-            '_xmlns:samlp'                      => 'urn:oasis:names:tc:SAML:2.0:protocol',
-
-            '_ID'                               => $this->getNewId(),
-            '_Version'                          => '2.0',
-            '_IssueInstant'                     => $this->timeStamp(),
-            '_Destination'                      => $remoteMetaData['SingleSignOnService']['Location'],
-            '_ForceAuthn'                       => ($originalRequest['_ForceAuthn'] == 'true') ? 'true' : 'false',
-            '_IsPassive'                        => ($originalRequest['_IsPassive']  == 'true') ? 'true' : 'false',
-
-            // Send the response to us.
-            '_AssertionConsumerServiceURL'      => $this->getCurrentEntityUrl('assertionConsumeUrl'),
-            '_ProtocolBinding'                  => 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST',
-
-            '_AttributeConsumingServiceIndex'   => $originalRequest['_AttributeConsumingServiceIndex'],
-
-            'saml:Issuer' => array('__v' => $this->getCurrentEntityUrl('sPMetadataService')),
-            'ds:Signature' => '__placeholder__',
-            'samlp:NameIDPolicy' => array(
-                '_Format' => 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient',
-                '_AllowCreate' => 'true',
-            ),
-        );
-
-        if ($scoping) {
-            $scoping = (array) $scoping;
-            foreach ($scoping as $scopedIdP) {
-                $request['samlp:Scoping']['samlp:IDPList']['samlp:IDPEntry'][] = array('_ProviderID' => $scoping);
-            }
-            return $request;
-        }
-
-        // Copy original scoping rules
-        if (isset($originalRequest['samlp:Scoping'])) {
-            $request['samlp:Scoping'] = $originalRequest['samlp:Scoping'];
-        }
-        else {
-            $request['samlp:Scoping'] = array();
-        }
-
-        // Decrease or initialize the proxycount
-        if (isset($originalRequest['samlp:Scoping']['_ProxyCount'])) {
-            $request['samlp:Scoping']['_ProxyCount']--;
-        }
-        else {
-            $request['samlp:Scoping']['_ProxyCount'] = $this->getConfig('max_proxies', 10);
-        }
-
-        // Add ourselves as requester
-        if (!isset($request['samlp:Scoping']['samlp:RequesterID'])) {
-            $request['samlp:Scoping']['samlp:RequesterID'] = array();
-        }
-        $request['samlp:Scoping']['samlp:RequesterID'][] = array('__v' => $originalRequest['saml:Issuer']['__v']);
-
-        return $request;
-    }
-
-    ////////  ATTRIBUTE FILTERING /////////
+////////  ATTRIBUTE FILTERING /////////
 
     public function filterInputAssertionAttributes(&$response)
     {
@@ -634,7 +636,7 @@ class Corto_ProxyServer
         $responseAssertionAttributes = Corto_XmlToArray::array2attributes($attributes);
     }
 
-    ////////  TEMPLATE RENDERING /////////
+////////  TEMPLATE RENDERING /////////
 
     public function renderTemplate($templateName, $vars = array(), $parentTemplates = array())
     {
@@ -695,7 +697,7 @@ class Corto_ProxyServer
         }
     }
 
-    //////// I/O /////////
+//////// I/O /////////
 
     /**
      * Parse the HTTP URL query string and return the (raw) parameters in an array.
@@ -738,7 +740,7 @@ class Corto_ProxyServer
         return print $rawOutput; 
     }
 
-    //////// UTILITIES /////////
+//////// UTILITIES /////////
 
     /**
      * Generate a SAML datetime with a given delta in seconds.
