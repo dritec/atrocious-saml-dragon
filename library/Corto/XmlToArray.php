@@ -54,7 +54,7 @@ class Corto_XmlToArray
         'saml:AuthenticatingAuthority',
         'samlp:RequesterID',
         'ds:X509Certificate',
-        'Transform',
+        'ds:Transform',
         'md:EntityDescriptor',
         'md:KeyDescriptor',
     );

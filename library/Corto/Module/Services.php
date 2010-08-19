@@ -23,6 +23,10 @@ class Corto_Module_Services extends Corto_Module_Abstract
             $scopedIDPs[] = $presetIdP;
         }
 
+        if ($this->_server->getCurrentEntitySetting('TransparantProxy', false)) {
+            $request['__']['Transparant'] = true;
+        }
+
         // If ForceAuthn attribute is on, then remove cached responses and cached IDPs
         if (isset($request['_ForceAuthn'])) {
             $this->_server->getSessionLog()->debug('SSO: Forcing new authentication, cached responses removed');

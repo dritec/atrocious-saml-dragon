@@ -299,7 +299,10 @@ class Corto_ProxyServer
 
         // Store the original Request
         $_SESSION[$originalId]['SAMLRequest'] = $request;
+
         // Store the mapping from the new request ID to the original request ID
+        $_SESSION[$newId] = array();
+        $_SESSION[$newId]['SAMLRequest'] = $request;
         $_SESSION[$newId]['_InResponseTo'] = $originalId;
 
         $this->getBindingsModule()->send($newRequest, $this->_entities['remote'][$idp]);
@@ -321,7 +324,6 @@ class Corto_ProxyServer
                 'paramname'         => 'SAMLRequest',
                 'destinationid'     => $idp,
                 'ProtocolBinding'   => $remoteMetaData['SingleSignOnService']['Binding'],
-                'Transparant'       => $this->getCurrentEntitySetting('TransparantProxy', false),
             ),
             '_xmlns:saml'                       => 'urn:oasis:names:tc:SAML:2.0:assertion',
             '_xmlns:samlp'                      => 'urn:oasis:names:tc:SAML:2.0:protocol',
@@ -401,7 +403,6 @@ class Corto_ProxyServer
     public function createEnhancedResponse($request, $sourceResponse)
     {
         $response = $this->_createBaseResponse($request);
-
         if (isset($request[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['Transparant']) &&
             $request[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['Transparant']) {
             $response['saml:Issuer']['__v'] = $sourceResponse['saml:Issuer']['__v'];

@@ -647,6 +647,14 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
                 );
             }
             $encodedMessage = Corto_XmlToArray::array2xml($message);
+            if ($this->_server->getConfig('debug')) {
+                $dom = new DOMDocument();
+                $dom->loadXML($encodedMessage);
+                if (!$dom->schemaValidate('http://docs.oasis-open.org/security/saml/v2.0/saml-schema-protocol-2.0.xsd')) {
+                    //echo '<pre>'.htmlentities(Corto_XmlToArray::formatXml($encodedMessage)).'</pre>';
+                    //throw new Exception('Message XML doesnt validate against XSD at Oasis-open.org?!');
+                }
+            }
         }
 
         $extra = $message['__']['RelayState'] ? '<input type="hidden" name="RelayState" value="' . htmlspecialchars($message['__']['RelayState']) . '">' : '';
@@ -662,7 +670,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
                 'message' => $encodedMessage,
                 'xtra' => $extra,
                 'name' => $name,
-                'trace' => $this->_server->getConfig('debug', false),//$this->_server->debugRequest($action, $message),
+                'trace' => $this->_server->getConfig('debug', false) ? htmlentities(Corto_XmlToArray::formatXml(Corto_XmlToArray::array2xml($message))) : '',
         ));
         $this->_server->sendOutput($output);
     }
@@ -685,7 +693,12 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
                     '_URI' => '__placeholder__',
                     'ds:Transforms' => array(
                         'ds:Transform' => array(
-                            '_Algorithm' => 'http://www.w3.org/2001/10/xml-exc-c14n#',
+                            array(
+                                '_Algorithm' => 'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
+                            ),
+                            array(
+                                '_Algorithm' => 'http://www.w3.org/2001/10/xml-exc-c14n#',
+                            ),
                         ),
                     ),
                     'ds:DigestMethod' => array(
