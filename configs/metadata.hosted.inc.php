@@ -28,8 +28,6 @@
  * - idp
  * Use only this IdP
  *
- * NOTE: When Corto is using the hosted server, it will add the following properties:
- *
  * - AuthnRequestsSigned
  * Require all Authentication Requests to be signed
  *
@@ -37,13 +35,18 @@
  *   - public
  *   - private
  *
+ * NOTE: When Corto is using the hosted server, it will add the following properties:
+ *
  * * EntityId
  * The full URL of the entity (http://localhost/corto.php)
  *
  * * EntityCode
  * The key for the entity (example: 'main')
+ *
+ * * TransparantProxy
+ * When an IdP was pre-selected, responses will be issued by the destination IdP, not by Corto.
  */
 
 $hostedEntities = array(
-    
+
 );
