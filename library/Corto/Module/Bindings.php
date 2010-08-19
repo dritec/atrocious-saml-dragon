@@ -200,17 +200,17 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
 
     protected function _verifyRequest(array $request)
     {
-        $this->_verifyKnownIssuer($request['Message']);
+        $this->_verifyKnownIssuer($request);
 
-        $requestIssuer = $request['Message']['saml:Issuer']['__v'];
+        $requestIssuer = $request['saml:Issuer']['__v'];
         $remoteEntity = $this->_server->getRemoteEntity($requestIssuer);
         
         if ((isset($remoteEntity['AuthnRequestsSigned']) && $remoteEntity['AuthnRequestsSigned']) ||
             ($this->_server->getCurrentEntitySetting('WantsAuthnRequestsSigned', false))) {
-            $this->_verifySignatureMessage($request['Message'], self::KEY_REQUEST);
+            $this->_verifySignatureMessage($request, self::KEY_REQUEST);
         }
         
-        $this->_verifyMessageDestinedForUs($request['Message']);
+        $this->_verifyMessageDestinedForUs($request);
     }
 
     protected function _verifyKnownIssuer($message)
@@ -285,16 +285,8 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         if (isset($response['saml:EncryptedAssertion'])) {
             $encryptedAssertion = $response['saml:EncryptedAssertion'];
 
-            $currentCertificates = $this->_server->getCurrentEntitySetting('certificates', array());
-            if (!isset($currentCertificates['private'])) {
-                $exceptionMessage = "Encrypted assertion found, but private key for ".
-                        $this->_server->getCurrentEntityUrl().
-                        " is not registered, unable to decrypt it to enrich assertion.";
-                throw new Corto_Module_Bindings_Exception($exceptionMessage);
-            }
-
             $response['saml:Assertion'] = $this->_decryptElement(
-                $currentCertificates['private'],
+                $this->_getCurrentEntityPrivateKey(),
                 $encryptedAssertion
             );
         }
@@ -305,7 +297,6 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         $encryptedKey  = base64_decode($element['xenc:EncryptedData']['ds:KeyInfo']['xenc:EncryptedKey']['xenc:CipherData']['xenc:CipherValue']['__v']);
         $encryptedData = base64_decode($element['xenc:EncryptedData']['xenc:CipherData']['xenc:CipherValue']['__v']);
 
-        $privateKey = openssl_pkey_get_private($privateKey);
         openssl_private_decrypt($encryptedKey, $sessionKey, $privateKey, OPENSSL_PKCS1_PADDING);
         openssl_free_key($privateKey);
 
@@ -344,24 +335,20 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
 
         // Otherwise it's in the message or in the assertion in the message (HTTP Post Response)
         $messageIssuer = $message['saml:Issuer']['__v'];
-        $remoteEntity = $this->_server->getRemoteEntity($messageIssuer);
-
-        if (!isset($remoteEntity['certificates']['public'])) {
-            throw new Corto_Module_Bindings_VerificationException("No public key known for $messageIssuer");
-        }
+        $publicKey = $this->_getRemoteEntityPublicKey($messageIssuer);
 
         $messageVerified = $this->_verifySignatureXMLElement(
-            $remoteEntity['certificates']['public'],
+            $publicKey,
             $message['__']['Raw'],
             $message
         );
 
-        if (!isset($message['Message']['saml:Assertion'])) {
+        if (!isset($message['saml:Assertion'])) {
             return $messageVerified;
         }
 
         $assertionVerified = $this->_verifySignatureXMLElement(
-            $remoteEntity['certificates']['public'],
+            $publicKey,
             $message['__']['Raw'],
             $message['saml:Assertion']
         );
@@ -379,17 +366,13 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         $queryString .= '&SigAlg=' . $rawGet['SigAlg'];
 
         $messageIssuer = $message['saml:Issuer']['__v'];
-        $remoteEntity = $this->_server->getRemoteEntity($messageIssuer);
+        $publicKey = $this->_getRemoteEntityPublicKey($messageIssuer);
 
-        if (!isset($remoteEntity['certificates']['public'])) {
-            throw new Corto_Module_Bindings_VerificationException("No public key known for $messageIssuer");
-        }
-
-        var_dump($remoteEntity['certificates']['public']);
         $verified = openssl_verify(
             $queryString,
             base64_decode($message['Signature']),
-            $remoteEntity['certificates']['public']);
+            $publicKey
+        );
 
         return ($verified === 1);
     }
@@ -398,20 +381,24 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
     protected function _verifySignatureXMLElement($publicKey, $xml, $element)
     {
         $signatureValue = base64_decode($element['ds:Signature']['ds:SignatureValue']['__v']);
-        $digestValue = base64_decode($element['ds:Signature']['ds:SignedInfo']['ds:Reference']['ds:DigestValue']['__v']);
-        $id = $element['_ID'];
+        $digestValue    = base64_decode($element['ds:Signature']['ds:SignedInfo']['ds:Reference']['ds:DigestValue']['__v']);
 
         $document = DOMDocument::loadXML($xml);
         $xp = new DomXPath($document);
         $xp->registerNamespace('ds', 'http://www.w3.org/2000/09/xmldsig#');
 
-        $signedElement = $xp->query("//*[@ID = '$id']")->item(0);
-        $signature = $xp->query(".//ds:Signature", $signedElement)->item(0);
-        $signedInfo = $xp->query(".//ds:SignedInfo", $signature)->item(0)->C14N(true, false);
+        $id = $element['_ID'];
+        $signedElement  = $xp->query("//*[@ID = '$id']")->item(0);
+        $signature      = $xp->query(".//ds:Signature", $signedElement)->item(0);
+        $signedInfo     = $xp->query(".//ds:SignedInfo", $signature)->item(0)->C14N(true, false);
         $signature->parentNode->removeChild($signature);
         $canonicalXml = $signedElement->C14N(true, false);
 
-        return sha1($canonicalXml, TRUE) == $digestValue && openssl_verify($signedInfo, $signatureValue, $publicKey) == 1;
+        $digestMatches = (sha1($canonicalXml, TRUE) == $digestValue);
+        if (!$digestMatches) {
+            return false;
+        }
+        return (openssl_verify($signedInfo, $signatureValue, $publicKey) == 1);
     }
 
     protected function _verifyMessageDestinedForUs(array $message)
@@ -570,8 +557,8 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
             $this->_server->getSessionLog()->debug("HTTP-Redirect: (Re-)Signing");
             $queryString .= '&SigAlg=' . urlencode($this->_server->getConfig('SigningAlgorithm'));
 
-            $privateKey = $this->_getCurrentEntityPrivateKey();
-            $key = openssl_pkey_get_private($privateKey);
+            $key = $this->_getCurrentEntityPrivateKey();
+
             $signature = "";
             openssl_sign($queryString, $signature, $key);
             openssl_free_key($key);
@@ -593,7 +580,27 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         if (!isset($certificates['private'])) {
             throw new Corto_Module_Bindings_Exception('Current entity has no private key, unable to sign message! Please set ["certificates"]["private"]!');
         }
-        return $certificates['private'];
+        $key = openssl_pkey_get_private($certificates['private']);
+        if ($key === false) {
+            throw new Corto_Module_Bindings_Exception("Current entity ['certificates']['private'] value is NOT a valid PEM formatted SSL private key?!? Value: " . $certificates['private']);
+        }
+        return $key;
+    }
+
+    protected function _getRemoteEntityPublicKey($entityId)
+    {
+        $remoteEntity = $this->_server->getRemoteEntity($entityId);
+
+        if (!isset($remoteEntity['certificates']['public'])) {
+            throw new Corto_Module_Bindings_VerificationException("No public key known for $entityId");
+        }
+
+        $publicKey = openssl_pkey_get_public($remoteEntity['certificates']['public']);
+        if ($publicKey === false) {
+            throw new Corto_Module_Bindings_Exception("Public key for $entityId is NOT a valid PEM SSL public key?!?! Value: " . $remoteEntity['certificates']['public']);
+        }
+
+        return $publicKey;
     }
 
     protected function _sendHTTPPost($message, $remoteEntity)
@@ -660,7 +667,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         $this->_server->sendOutput($output);
     }
     
-    protected function _sign($privateKey, $element)
+    protected function _sign($key, $element)
     {
         $signature = array(
             '__t' => 'ds:Signature',
@@ -691,7 +698,6 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
             ),
         );
 
-        $key = openssl_pkey_get_private($privateKey);
         $canonicalXml = DOMDocument::loadXML(Corto_XmlToArray::array2xml($element))->firstChild->C14N(true, false);
 
         $signature['ds:SignedInfo']['ds:Reference']['ds:DigestValue']['__v'] = base64_encode(sha1($canonicalXml, TRUE));
