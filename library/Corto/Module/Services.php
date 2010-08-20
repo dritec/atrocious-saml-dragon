@@ -7,7 +7,7 @@ class Corto_Module_Services_Exception extends Corto_ProxyServer_Exception
 class Corto_Module_Services extends Corto_Module_Abstract
 {
     const DEFAULT_REQUEST_BINDING  = 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect';
-    const DEFAULT_RESPONSE_BINDING = 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Post';
+    const DEFAULT_RESPONSE_BINDING = 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST';
 
     /**
      * Handle a Single Sign On request (Authentication Request)
