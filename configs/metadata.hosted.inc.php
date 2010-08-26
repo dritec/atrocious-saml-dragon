@@ -43,10 +43,11 @@
  * * EntityCode
  * The key for the entity (example: 'main')
  *
- * * TransparantProxy
+ * * TransparentProxy
  * When an IdP was pre-selected, responses will be issued by the destination IdP, not by Corto.
  */
 
 $hostedEntities = array(
-
+		'https://wayf.ruc.dk/corto/index.php/sp',
+		'https://wayf.ruc.dk/corto/index.php/wayf',
 );

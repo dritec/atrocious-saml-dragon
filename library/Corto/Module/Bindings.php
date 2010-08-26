@@ -1,5 +1,7 @@
 <?php
 
+require_once 'Abstract.php';
+
 class Corto_Module_Bindings_Exception extends Corto_ProxyServer_Exception
 {
 }
@@ -35,11 +37,14 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
 
     public function receiveRequest()
     {
-        $request = $this->_receiveMessage(self::KEY_REQUEST);
-        $this->_server->getSessionLog()->debug("Received request: " . var_export($request, true));
+		$request = $this->_receiveMessage(self::KEY_REQUEST);
+		$request['_ForceAuthn'] = isset($request['_ForceAuthn']) && ($request['_ForceAuthn'] == 'true' || $request['_ForceAuthn'] == '1');
+ 		$request['_IsPassive']   = isset($request['_IsPassive']) && ($request['_IsPassive'] == 'true' || $request['_IsPassive'] == '1');
 
-        $this->_verifyRequest($request);
-        $this->_c14nRequest($request);
+       	$this->_server->getSessionLog()->debug("Received request: " . var_export($request, true));
+
+       	$this->_verifyRequest($request);
+       	$this->_c14nRequest($request);
 
         return $request;
     }
@@ -85,11 +90,11 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         switch ($key) {
             case self::KEY_REQUEST:
                 // Trying to get an artifact from an SP, identify ourselves as an idp
-                $issuer = $this->_server->getCurrentEntityUrl('idPMetadataService');
+                $issuer = $this->_server->getCurrentEntityUrl();
                 break;
             case self::KEY_RESPONSE:
                 // Trying to get an artifact from an IdP, identify ourselves as a sp
-                $issuer = $this->_server->getCurrentEntityUrl('sPMetadataService');
+                $issuer = $this->_server->getCurrentEntityUrl();
                 break;
             default:
                 throw new Corto_Module_Bindings_Exception("Unknown message type '$key'");
@@ -170,7 +175,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         }
 
         $message = gzinflate(base64_decode($_GET[$key]));
-        $messageArray       = $this->_getArrayFromReceivedMessage($message);
+	    $messageArray = $this->_getArrayFromReceivedMessage($message);
 
         $relayState = "";
         if (isset($_GET['RelayState'])) {
@@ -190,9 +195,8 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
 
     protected function _getArrayFromReceivedMessage($message)
     {
-        $messageDecoded = json_decode($message);
-        if ($messageDecoded) {
-            return $messageDecoded;
+ 		if (substr($message, 0, 1) == '{') {
+            return json_decode($message, true);
         }
 
         return Corto_XmlToArray::xml2array($message);
@@ -320,7 +324,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
     {
         $this->_verifyKnownIssuer($response);
 
-        if ($this->_server->getCurrentEntitySetting('WantsAssertionsSigned', true)) {
+        if ($this->_server->getCurrentEntitySetting('WantsAssertionsSigned', false)) {
             $this->_verifySignatureMessage($response, self::KEY_RESPONSE);
         }
         $this->_verifyMessageDestinedForUs($response);
@@ -523,14 +527,14 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         // Determine if we should sign the message
         $wantRequestsSigned = ($remoteEntity['WantsAuthnRequestsSigned'] ||
                                 $this->_server->getCurrentEntitySetting('AuthnRequestsSigned'));
-        $mustSign = ($messageType===self::KEY_REQUEST && !$wantRequestsSigned);
+        $mustSign = ($messageType===self::KEY_REQUEST && $wantRequestsSigned);
         if ($mustSign) {
             $this->_server->getSessionLog()->debug("HTTP-Redirect: Removing signature");
             unset($message['ds:Signature']);
         }
 
         // Encode the message in destination format
-        if (isset($remoteEntity['WantsJson'])) {
+        if ($message['__']['ProtocolBinding'] == 'JSON-Redirect') {
             $encodedMessage = json_encode($message);
         }
         else {
@@ -542,7 +546,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
 
         // Build the query string
         if ($message['__']['ProtocolBinding'] == 'JSON-Redirect') {
-            $queryString = "j$messageType = $encodedMessage";
+            $queryString = "$messageType=$encodedMessage";
         }
         else {
             $queryString = "$messageType=" . $encodedMessage;

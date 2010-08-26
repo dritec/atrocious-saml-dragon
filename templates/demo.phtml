@@ -4,66 +4,38 @@
         <!--
         body
         {
-            color: #CC9933;
-            background-color: #FFFFCC;
-            font-size: large;
-            font-family: verdana,monospace;
-            text-align: left;
-        }
-
-        pre
-        {
-            font-size: medium;
-        }
-
-        table
-        {
-            padding: 1ex;
-        }
-
-        td.r
-        {
-            text-align: right;
-            vertical-align: top;
-        }
-
-        div
-        {
-            border: 1px dotted;
             margin: 1em;
-            padding: 1em;
-            width: 55em;
+            width: 50em;
         }
-
-        a:link, a:visited, a:hover, a:active
-        {
-            text-decoration: none;
-            color: #CC9933;
-        }
+		tt {
+			color: #7BB84A;
+			font-size: inherited;
+			font-family: inherited;
+		}
 -->
         </style>
     </head>
     <body>
-        <img alt="" src="images/corto_logo_606x223.png" width="303" height="111" /><br />
+        <img alt="" src="/corto/images/corto_logo.png" width="100" /><br />
+        <p>Welcome to the c<tt>o</tt>rto demopage.<p>Here you can play with the default identity- and serviceproviders distributed with corto:
+        <ul>
+        <li>'app' - an application 'provider' - this page
+        <li>'sp' - a service provider
+        <li>'wayf' - a proxy
+        <li>'idp' - an identity provider
+        <li>'auth' - an authentication provider.
+        </ul>In corto an authentication provider is scaled down
+        identity provider and an application provider is a scaled down service provider
+        which both only speaks 'SAML' in a json encoding of corto's 'internal' ordered map (ie. php array) representation of SAML entities.
+        <p>By pressing the "Demo" button a saml/json request will be sent to the sp, which sends it as real saml/xml to 'wayf', which sends it as saml/xml to 'idp',
+        which finally sends it as saml/json to 'null' where you get the chance to press an 'OK' button to start sending a response back. The saml request will be 
+        displayed
+        at 'null' in print_r format. When the response get back to
+        'app' it will also be displayed on this page in print_r format.
         <?= $message ?>
         <form method=POST action="<?= $action ?>">
-            <input name=doit value=1 type="hidden" />
-            <? foreach($idps as $idp): ?>
-            <input type=checkbox name="IDPList[]" value="<?= $idp ?>"><?= $idp?> <br>
-            <? endforeach; ?>
-            <input type=checkbox name="idp" value="wayf_vidp1" xchecked>vidp1 via wayf<br>
-            <input type=checkbox name="idp" value="wayf_idp1" checked>Idp1 via wayf<br>
-            <input type=checkbox name="idp" value="wayf_idp2">Idp2 via wayf<br>
-            <input type=checkbox name="idp" value="idp1">Idp1 directly<br>
-            <input type=checkbox name=IDPList[]  value="http://jach-idp.test.wayf.dk/saml2/idp/metadata.php">jach-idp<br>
-            <input type=checkbox name=IDPList[]  value="https://pure.wayf.ruc.dk/myWayf">pure-idp<br>
-            <p>
-                <input type=checkbox name=ForceAuthn value=true>ForceAuthn
-                <input type=checkbox name=IsPassive value=true>IsPassive
-                <a href="<?=CORTO_BASE_URL . '/idp1/sendUnsolicitedAssertion'?>">Send unsolicited assertion (from idp1)</a><br>
-                <a href="<?= $self . "/wayf/shibSingleSignOnService?shire=" . urlencode($self) . "/main/demoapp&providerId=" . urlencode($self) . "/main" ?>">Shibboleth</a>
-            </p>
-            <input type=submit value="Send Request">
+        	<input type=hidden name=doit value=1>
+            <input type=submit value="Demo">
         </form>
 
         <pre>

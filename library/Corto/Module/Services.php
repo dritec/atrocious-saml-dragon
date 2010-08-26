@@ -1,5 +1,7 @@
 <?php
 
+require_once 'Abstract.php';
+
 class Corto_Module_Services_Exception extends Corto_ProxyServer_Exception
 {
 }
@@ -9,26 +11,22 @@ class Corto_Module_Services extends Corto_Module_Abstract
     const DEFAULT_REQUEST_BINDING  = 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect';
     const DEFAULT_RESPONSE_BINDING = 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST';
 
+
     /**
      * Handle a Single Sign On request (Authentication Request)
      */
     public function singleSignOnService()
     {
         $request = $this->_server->getBindingsModule()->receiveRequest();
-
-        // Add the hosted IdP as a scoped IdP
         $scopedIDPs = array();
-        $presetIdP = $this->_server->getCurrentEntitySetting('idp');
-        if ($presetIdP) {
-            $scopedIDPs[] = $presetIdP;
-        }
-
-        if ($this->_server->getCurrentEntitySetting('TransparantProxy', false)) {
-            $request['__']['Transparant'] = true;
+		
+		// 
+        if ($this->_server->getCurrentEntitySetting('TransparentProxy', false)) {
+            $request['__']['Transparent'] = true;
         }
 
         // If ForceAuthn attribute is on, then remove cached responses and cached IDPs
-        if (isset($request['_ForceAuthn'])) {
+        if ($request['_ForceAuthn']) {
             $this->_server->getSessionLog()->debug('SSO: Forcing new authentication, cached responses removed');
             unset($_SESSION['CachedResponses']);
         }
@@ -38,6 +36,15 @@ class Corto_Module_Services extends Corto_Module_Abstract
             foreach ($request['samlp:Scoping']['samlp:IDPList']['samlp:IDPEntry'] as $IDPEntry) {
                 $scopedIDPs[] = $IDPEntry['_ProviderID'];
             }
+            $this->_server->getSessionLog()->debug("SSO: Request contains scoped idps: " . print_r($scopedIDPs, 1));
+        }
+
+        // If we configured an IDPList it overrides the one in the request
+		// IDPLIst might contain only one idp!
+        $presetIdPs = $this->_server->getCurrentEntitySetting('IDPList');
+        if ($presetIdPs) {
+            $scopedIDPs = $presetIdPs;
+            $this->_server->getSessionLog()->debug("SSO: Scoped idps found in metadata: " . print_r($scopedIDPs, 1));
         }
 
         // If one of the scoped IDP has a cache entry, return that
@@ -60,36 +67,23 @@ class Corto_Module_Services extends Corto_Module_Abstract
             return $this->_server->sendResponse($request, $response);
         }
 
-        // If we configured an allowed IdP and an IDPList then we ignore the original scoping rules
-        // and send the new authnrequest
-        $presetIdPs = $this->_server->getCurrentEntitySetting('IdPList');
-        if ($presetIdP && $presetIdPs) {
-            $this->_server->getSessionLog()->debug("SSO: Preset idp and idpList found: '$presetIdP'");
-            return $this->_server->sendAuthenticationRequest($request, $presetIdP, $presetIdPs);
-        }
-
-        // If we have an IdP configured then we send the authentication request to that IdP
-        if ($presetIdP) {
-            $this->_server->getSessionLog()->debug("SSO: Preset idp found: '$presetIdP'");
-            return $this->_server->sendAuthenticationRequest($request, $presetIdP);
-        }
-
         // Get all registered Single Sign On Services
-        $candidateIDPs = array();
+        $candidateIDPs = array();        
         foreach ($this->_server->getRemoteEntities() as $remoteEntityId => $remoteEntity) {
             if (isset($remoteEntity['SingleSignOnService'])) {
                 $candidateIDPs[] = $remoteEntityId;
             }
         }
 
-        // Filter out the hosted entity and if we have scoping, filter out every non-scoped IdP
-        $candidateIDPs = array_diff($candidateIDPs, array($this->_server->getCurrentEntityUrl()));
+        $this->_server->getSessionLog()->debug("SSO: Candidate idps found in metadata: " . print_r($candidateIDPs, 1));
+				
+        // If we have scoping, filter out every non-scoped IdP
         $candidateIDPs = sizeof($scopedIDPs) > 0 ? array_intersect($scopedIDPs, $candidateIDPs) : $candidateIDPs;
+        $this->_server->getSessionLog()->debug("SSO: Candidate idps found in metadata: " . print_r($candidateIDPs, 1));
 
         // More than 1 candidate found, send authentication request to the first one
         if (count($candidateIDPs) === 1) {
             $idp = $candidateIDPs[0];
-
             $this->_server->getSessionLog()->debug("SSO: Only 1 candidate IdP: $idp");
             return $this->_server->sendAuthenticationRequest($request, $idp);
         }
@@ -211,7 +205,7 @@ class Corto_Module_Services extends Corto_Module_Abstract
             '_xmlns:md' => 'urn:oasis:names:tc:SAML:2.0:metadata',
             'md:EntityDescriptor' => array(
                 '_validUntil' => $this->_server->timeStamp(strtotime('tomorrow') - time()),
-                '_entityID' => $this->_server->getCurrentEntityUrl('idPMetadataService'),
+                '_entityID' => $this->_server->getCurrentEntity(),
                 'md:IDPSSODescriptor' => array(
                     '_protocolSupportEnumeration' => "urn:oasis:names:tc:SAML:2.0:protocol",
                 ),
@@ -274,7 +268,7 @@ class Corto_Module_Services extends Corto_Module_Abstract
             '_xmlns:md' => 'urn:oasis:names:tc:SAML:2.0:metadata',
             'md:EntityDescriptor' => array(
                 '_validUntil' => $this->_server->timeStamp(strtotime('tomorrow') - time()),
-                '_entityID' => $this->_server->getCurrentEntityUrl('sPMetadataService'),
+                '_entityID' => $this->_server->getCurrentEntity(),
                 'md:SPSSODescriptor' => array(
                     '_protocolSupportEnumeration' => "urn:oasis:names:tc:SAML:2.0:protocol",
                 ),

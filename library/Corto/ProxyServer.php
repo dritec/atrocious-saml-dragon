@@ -4,6 +4,7 @@
  *
  */
 require 'XmlToArray.php';
+require 'Log/Dummy.php';
 
 class Corto_ProxyServer_Exception extends Exception
 {
@@ -152,26 +153,25 @@ class Corto_ProxyServer
         }
         return $default;
     }
+    
+    public function selfUrl($entityid = null)
+    { 
+    	return  'http' . ($_SERVER['HTTPS'] ? 's' : '') . '://' . $_SERVER['HTTP_HOST'] . $this->selfPath($entityid);
+    }
+
+	public function selfPath($entityid = null)
+	{
+		return $_SERVER['SCRIPT_NAME'] . '/' . $entityid ;
+	}
 
     public function getHostedEntityUrl($entityCode, $serviceName = "", $remoteEntityId = "")
     {
-        $scheme = 'http';
-        if (isset($_SERVER['HTTPS'])) {
-            $scheme = 'https';
-        }
-
-        $host = $_SERVER['HTTP_HOST'];
-
         $entityPart = $entityCode;
         if ($remoteEntityId) {
             $entityPart .= '_' . md5($remoteEntityId);
         }
-
-        if (!$serviceName) {
-            return $scheme . '://' . $host . ($this->_hostedPath ? $this->_hostedPath : '') . $entityPart;
-        }
-
-        return $scheme . '://' . $host . ($this->_hostedPath ? $this->_hostedPath : '') . $entityPart . '/' . $serviceName;
+		return 'http' . ($_SERVER['HTTPS'] ? 's' : '') . '://' . $_SERVER['HTTP_HOST']
+			. $_SERVER['SCRIPT_NAME'] . '/' . $entityPart  . ($serviceName ? '/': '') . $serviceName;
     }
 
     public function getRemoteEntity($entityId)
@@ -183,7 +183,8 @@ class Corto_ProxyServer
 
     public function getRemoteEntities()
     {
-        return $this->_entities['remote'];
+    	
+        return array_intersect($this->_entities['remote'], array($this->_entities['current']));
     }
 
     public function setRemoteEntities($entities)
@@ -216,7 +217,6 @@ class Corto_ProxyServer
         $this->getSessionLog()->debug("Started request with $uri, resulting in parameters: ". var_export($parameters, true));
 
         $serviceName = $parameters['ServiceName'];
-
         $this->getSessionLog()->debug("Calling service '$serviceName'");
         $this->getServicesModule()->$serviceName();
         $this->getSessionLog()->debug("Done calling service '$serviceName'");
@@ -238,7 +238,7 @@ class Corto_ProxyServer
             foreach ($remoteEntityIds as $remoteEntityId) {
                 if (md5($remoteEntityId) === $remoteIdPMd5) {
                     $hostedEntity['idp'] = $remoteEntityId;
-                    $hostedEntity['TransparantProxy'] = true;
+                    $hostedEntity['TransparentProxy'] = true;
                     $this->getSessionLog()->debug("Detected pre-selection of $remoteEntityId as IdP, switching to transparant mode");
                     break;
                 }
@@ -332,16 +332,16 @@ class Corto_ProxyServer
             '_Version'                          => '2.0',
             '_IssueInstant'                     => $this->timeStamp(),
             '_Destination'                      => $remoteMetaData['SingleSignOnService']['Location'],
-            '_ForceAuthn'                       => ($originalRequest['_ForceAuthn'] == 'true') ? 'true' : 'false',
-            '_IsPassive'                        => ($originalRequest['_IsPassive']  == 'true') ? 'true' : 'false',
+            '_ForceAuthn'                       => ($originalRequest['_ForceAuthn']) ? 'true' : 'false',
+            '_IsPassive'                        => ($originalRequest['_IsPassive']) ? 'true' : 'false',
 
             // Send the response to us.
-            '_AssertionConsumerServiceURL'      => $this->getCurrentEntityUrl('assertionConsumeUrl'),
+            '_AssertionConsumerServiceURL'      => $this->getCurrentEntityUrl('AssertionConsumerService'),
             '_ProtocolBinding'                  => 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST',
 
             '_AttributeConsumingServiceIndex'   => $originalRequest['_AttributeConsumingServiceIndex'],
 
-            'saml:Issuer' => array('__v' => $this->getCurrentEntityUrl('sPMetadataService')),
+            'saml:Issuer' => array('__v' => $this->getCurrentEntityUrl()),
             'ds:Signature' => '__placeholder__',
             'samlp:NameIDPolicy' => array(
                 '_Format' => 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient',
@@ -403,8 +403,8 @@ class Corto_ProxyServer
     public function createEnhancedResponse($request, $sourceResponse)
     {
         $response = $this->_createBaseResponse($request);
-        if (isset($request[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['Transparant']) &&
-            $request[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['Transparant']) {
+        if (isset($request[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['Transparent']) &&
+            $request[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['Transparent']) {
             $response['saml:Issuer']['__v'] = $sourceResponse['saml:Issuer']['__v'];
         }
 
@@ -415,7 +415,7 @@ class Corto_ProxyServer
         // as the assertion passes through multiple times ???
         $authenticatingAuthorities = &$response['saml:Assertion']['saml:AuthnStatement']['saml:AuthnContext']['saml:AuthenticatingAuthority'];
         foreach ((array) $authenticatingAuthorities as $key => $authenticatingAuthority) {
-            if ($authenticatingAuthority['__v'] === $this->getCurrentEntityUrl('sPMetadataService')) {
+            if ($authenticatingAuthority['__v'] === $this->getCurrentEntity()) {
                 unset($authenticatingAuthorities[$key]);
             }
         }
@@ -541,7 +541,7 @@ class Corto_ProxyServer
             '_IssueInstant' => $now,
             '_InResponseTo' => $request['_ID'],
 
-            'saml:Issuer' => array('__v' => $this->getCurrentEntityUrl('idPMetadataService')),
+            'saml:Issuer' => array('__v' => $this->getCurrentEntityUrl()),
             'samlp:Status' => array(
                 'samlp:StatusCode' => array(
                     '_Value' => 'urn:oasis:names:tc:SAML:2.0:status:Success',
@@ -719,16 +719,17 @@ class Corto_ProxyServer
         return $rawGet;
     }
 
-    public function redirect($location)
+    public function redirect($location, $message)
     {
         $this->getSessionLog()->debug("Redirecting to $location");
         
-        if (!$this->getConfig('debug', false)) {
+        if ($this->getConfig('debug', true)) {
+	        $output = $this->renderTemplate('redirect', array('location'=>$location, 'message' => $message));
+	        $this->sendOutput($output);
+        } else {
             $this->sendHeader('Location', $location);
         }
 
-        $output = $this->renderTemplate('redirect', array('location'=>$location));
-        $this->sendOutput($output);
     }
 
     public function sendHeader($name, $value)
