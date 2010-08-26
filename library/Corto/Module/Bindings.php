@@ -1,15 +1,31 @@
 <?php
 
+/**
+ * @internal include the abstract baseclass
+ */
 require_once 'Abstract.php';
 
+/**
+ * Class for binding module specific exceptions.
+ * @author Boy
+ */
 class Corto_Module_Bindings_Exception extends Corto_ProxyServer_Exception
 {
 }
 
+/**
+ * Class for binding module verification exceptions.
+ * @author Boy
+ */
 class Corto_Module_Bindings_VerificationException extends Corto_Module_Bindings_Exception
 {
 }
 
+/**
+ * The bindings module for Corto, which implements support for various data
+ * bindings.
+ * @author Boy
+ */
 class Corto_Module_Bindings extends Corto_Module_Abstract
 {
     const ARTIFACT_BINARY_FORMAT = 'ntypecode/nendpointindex/H40sourceid/H40messagehandle';
@@ -18,6 +34,10 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
     const KEY_REQUEST  = 'SAMLRequest';
     const KEY_RESPONSE = 'SAMLResponse';
 
+    /**
+     * Supported bindings in Corto. 
+     * @var array
+     */
     protected $_bindings = array(
             'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect'        => '_sendHTTPRedirect',
             'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST'            => '_sendHTTPPost',
@@ -35,6 +55,10 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
             //'urn:mace:shibboleth:1.0:profiles:AuthnRequest'             => 'sendShibAuthnRequest',
     );
 
+    /**
+     * Process an incoming SAML request message. The data is retrieved automatically 
+     * depending on the binding used.
+     */
     public function receiveRequest()
     {
 		$request = $this->_receiveMessage(self::KEY_REQUEST);
@@ -49,6 +73,9 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         return $request;
     }
 
+    /**
+     * Process an incoming SAML response message.
+     */
     public function receiveResponse()
     {
         $response = $this->_receiveMessage(self::KEY_RESPONSE);
@@ -60,6 +87,16 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         return $response;
     }
 
+    /**
+     * Retrieve a message of a certain key, depending on the binding used.
+     * A number of bindings is tried in sequence. If the message is available
+     * as an artifact, then that is used. Else if the message is available as
+     * an http binding, that will be used or finally if the message is 
+     * available via a http redirect binding than that is used. 
+     * If none are available, then nothing is returned.
+     * @param String $key The key to find
+     * @return String The message that was received.
+     */
     protected function _receiveMessage($key)
     {
         $message = $this->_receiveMessageFromInternalBinding($key);
@@ -94,6 +131,13 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         return $_REQUEST[$key];
     }
 
+    /**
+     * Retrieve a message via artifact binding.
+     * @param String $key The key to look for.
+     * @return mixed False if there was no suitable message in this binding
+     *               String the message if it was found
+     *               An exception if something went wrong.
+     */
     protected function _receiveMessageFromArtifact($key)
     {
         if (!isset($_REQUEST[self::KEY_ARTIFACT])) {
@@ -168,6 +212,13 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         return $message;
     }
 
+    /**
+     * Retrieve a message via http post binding.
+     * @param String $key The key to look for.
+     * @return mixed False if there was no suitable message in this binding
+     *               String the message if it was found
+     *               An exception if something went wrong.
+     */
     protected function _receiveMessageFromHttpPost($key)
     {
         if (!isset($_POST[$key])) {
@@ -184,6 +235,13 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         return $messageArray;
     }
 
+    /**
+     * Retrieve a message via http redirect binding.
+     * @param String $key The key to look for.
+     * @return mixed False if there was no suitable message in this binding
+     *               String the message if it was found
+     *               An exception if something went wrong.
+     */
     protected function _receiveMessageFromHttpRedirect($key)
     {
         if (!isset($_GET[$key])) {
@@ -209,6 +267,13 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         return $messageArray;
     }
 
+    /**
+     * Decode a JSON or XML encoded message into a PHP array. It uses a crude
+     * detection to see whether it's dealing with json (if the message starts 
+     * with '{') or xml (all other cases). 
+     * @param String $message A Json or XML encoded message
+     * @return array An array of data that was contained in the message
+     */
     protected function _getArrayFromReceivedMessage($message)
     {
  		if (substr($message, 0, 1) == '{') {
@@ -218,6 +283,14 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         return Corto_XmlToArray::xml2array($message);
     }
 
+    /**
+     * Verify if a request has a valid signature (if required), whether
+     * the issuer is a known entity and whether the message is destined for
+     * us. Throws an exception if any of these conditions are not met.
+     * @param array $request The array with request data
+     * @throws Corto_Module_Bindings_VerificationException if any of the
+     * verifications fail
+     */
     protected function _verifyRequest(array $request)
     {
         $this->_verifyKnownIssuer($request);
@@ -227,22 +300,32 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         
         if ((isset($remoteEntity['AuthnRequestsSigned']) && $remoteEntity['AuthnRequestsSigned']) ||
             ($this->_server->getCurrentEntitySetting('WantsAuthnRequestsSigned', false))) {
-            $this->_verifySignatureMessage($request, self::KEY_REQUEST);
+            $this->_verifySignature($request, self::KEY_REQUEST);
         }
         
         $this->_verifyMessageDestinedForUs($request);
     }
 
+    /**
+     * Verify if a message has an issuer that is known to us. If not, it 
+     * throws a Corto_Module_Bindings_VerificationException.
+     * @param array $message
+     * @throws Corto_Module_Bindings_VerificationException
+     */
     protected function _verifyKnownIssuer($message)
     {
         $messageIssuer = $message['saml:Issuer']['__v'];
         $remoteEntity = $this->_server->getRemoteEntity($messageIssuer);
         if ($remoteEntity===null) {
-            throw new Corto_Module_Bindings_Exception("Issuer '{$messageIssuer}' is not a known remote entity? (please add SP/IdP to Remote Entities)");
+            throw new Corto_Module_Bindings_VerificationException("Issuer '{$messageIssuer}' is not a known remote entity? (please add SP/IdP to Remote Entities)");
         }
     }
 
-    protected function _c14nRequest(array $request)
+    /**
+     * Canonicalize a request array.
+     * @param array $request
+     */
+    protected function _c14nRequest(array &$request)
     {
         $forceAuthentication = &$request['_ForceAuthn'];
         $forceAuthentication = $forceAuthentication == 'true' || $forceAuthentication == '1';
@@ -251,6 +334,13 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         $isPassive = $isPassive == 'true' || $isPassive == '1';
     }
 
+    /**
+     * Encrypt an element using a particular public key.
+     * @param String $publicKey The public key used for encryption. 
+     * @param array $element An array representation of an xml fragment 
+     * @param unknown_type $tag ???
+     * @return array The encrypted version of the element.
+     */
     protected function _encryptElement($publicKey, $element, $tag = null)
     {
         if ($tag) {
@@ -300,7 +390,11 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         return $encryptedElement;
     }
 
-    protected function _decryptResponse(array $response)
+    /**
+     * Decrypt a response message
+     * @param array $response The response to decrypt.
+     */
+    protected function _decryptResponse(array &$response)
     {
         if (isset($response['saml:EncryptedAssertion'])) {
             $encryptedAssertion = $response['saml:EncryptedAssertion'];
@@ -312,6 +406,17 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         }
     }
 
+    /**
+     * Decrypt an xml fragment.
+     * @param String $privateKey The private key to use to decrypt the 
+     *                           elements.
+     * @param array $element Array representation of an xml fragment
+     * @param Bool $returnAsXML If true, the method returns an xml string.
+     *                          If false (default), it returns an array 
+     *                          representation of the xml fragment.
+     * @return String|Array The decrypted element (as an array or string 
+     *                      depending on the returnAsXml parameter.
+     */
     protected function _decryptElement($privateKey, $element, $returnAsXML = false)
     {
         $encryptedKey  = base64_decode($element['xenc:EncryptedData']['ds:KeyInfo']['xenc:EncryptedKey']['xenc:CipherData']['xenc:CipherValue']['__v']);
@@ -341,7 +446,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         $this->_verifyKnownIssuer($response);
 
         if ($this->_server->getCurrentEntitySetting('WantsAssertionsSigned', false)) {
-            $this->_verifySignatureMessage($response, self::KEY_RESPONSE);
+            $this->_verifySignature($response, self::KEY_RESPONSE);
         }
         $this->_verifyMessageDestinedForUs($response);
         $this->_verifyTimings($response);
@@ -393,6 +498,10 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
             base64_decode($message['Signature']),
             $publicKey
         );
+        
+        if (!$verified) {
+            throw new Corto_Module_Bindings_VerificationException("Invalid signature");
+        }
 
         return ($verified === 1);
     }
@@ -426,10 +535,9 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         $destinationId = $message['_Destination'];
         if ($destinationId) { // Destination is optional
             if (strpos($this->_server->getCurrentEntityUrl(), $destinationId) !== 0) {
-                //throw new Corto_Module_Bindings_VerificationException("Destination: '$destinationId' is not here");
+                throw new Corto_Module_Bindings_VerificationException("Destination: '$destinationId' is not here; message not destined for us");
             }
         }
-        return true;
     }
 
     protected function _verifyTimings(array $message)
