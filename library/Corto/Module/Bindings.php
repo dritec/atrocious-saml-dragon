@@ -24,7 +24,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
             //'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Artifact'        => 'sendHTTPArtifact',
             //'urn:oasis:names:tc:SAML:2.0:bindings:URI'                  => 'sendURI',
             //'urn:oasis:names:tc:SAML:2.0:bindings:SOAP'                 => 'sendSOAP',
-            //'INTERNAL'                                                  => 'sendInternal',
+            'INTERNAL'                                                  => 'sendInternal',
             'JSON-Redirect'                                             => '_sendHTTPRedirect',
             'JSON-POST'                                                 => '_sendHTTPPost',
             null                                                        => '_sendHTTPRedirect',
@@ -62,6 +62,11 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
 
     protected function _receiveMessage($key)
     {
+        $message = $this->_receiveMessageFromInternalBinding($key);
+        if (!empty($message)) {
+            return $message;
+        }
+
         $message = $this->_receiveMessageFromArtifact($key);
         if (!empty($message)) {
             return $message;
@@ -76,6 +81,17 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         if (!empty($message)) {
             return $message;
         }
+
+        throw new Corto_Module_Bindings_Exception('Unable to receive message: ' . $key);
+    }
+
+    protected function _receiveMessageFromInternalBinding($key)
+    {
+        if (!isset($_REQUEST[$key]) || !is_array($_REQUEST[$key])) {
+            return false;
+        }
+        
+        return $_REQUEST[$key];
     }
 
     protected function _receiveMessageFromArtifact($key)
@@ -650,6 +666,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
                     $message
                 );
             }
+
             $encodedMessage = Corto_XmlToArray::array2xml($message);
             if ($this->_server->getConfig('debug')) {
                 $dom = new DOMDocument();
@@ -677,6 +694,25 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
                 'trace' => $this->_server->getConfig('debug', false) ? htmlentities(Corto_XmlToArray::formatXml(Corto_XmlToArray::array2xml($message))) : '',
         ));
         $this->_server->sendOutput($output);
+    }
+
+    public function sendInternal($message, $remoteEntity)
+    {
+        // Store the message
+        $name            = $message['__']['paramname'];
+        $_REQUEST[$name] = $message;
+
+        $destinationLocation = $message['_Destination'];
+        $parameters = $this->_server->getParametersFromUrl($destinationLocation);
+        $this->_server->setCurrentEntity($parameters['EntityCode'], $parameters['RemoteIdPMd5']);
+
+        $this->_server->getSessionLog()->debug("Using internal binding for destination: $destinationLocation, resulting in parameters: " . var_export($parameters, true));
+
+        $serviceName = $parameters['ServiceName'];
+
+        $this->_server->getSessionLog()->debug("Calling service '$serviceName'");
+        $this->_server->getServicesModule()->$serviceName();
+        $this->_server->getSessionLog()->debug("Done calling service '$serviceName'");
     }
     
     protected function _sign($key, $element)
