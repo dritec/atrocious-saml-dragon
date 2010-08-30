@@ -320,7 +320,7 @@ class Corto_Module_Services extends Corto_Module_Abstract
             '_xmlns:md' => 'urn:oasis:names:tc:SAML:2.0:metadata',
             'md:EntityDescriptor' => array(
                 '_validUntil' => $this->_server->timeStamp(strtotime('tomorrow') - time()),
-                '_entityID' => $this->_server->getCurrentEntity(),
+                '_entityID' => $this->_server->getCurrentEntityUrl('idPMetadataService'),
                 'md:IDPSSODescriptor' => array(
                     '_protocolSupportEnumeration' => "urn:oasis:names:tc:SAML:2.0:protocol",
                 ),
@@ -389,7 +389,7 @@ class Corto_Module_Services extends Corto_Module_Abstract
             '_xmlns:md' => 'urn:oasis:names:tc:SAML:2.0:metadata',
             'md:EntityDescriptor' => array(
                 '_validUntil' => $this->_server->timeStamp(strtotime('tomorrow') - time()),
-                '_entityID' => $this->_server->getCurrentEntity(),
+                '_entityID' => $this->_server->getCurrentEntityUrl('sPMetadataService'),
                 'md:SPSSODescriptor' => array(
                     '_protocolSupportEnumeration' => "urn:oasis:names:tc:SAML:2.0:protocol",
                 ),
@@ -532,11 +532,8 @@ class Corto_Module_Services extends Corto_Module_Abstract
             $statement->execute($parameters);
             $rows = $statement->fetchAll();
 
-            var_dump($parameters);
-            var_dump($rows);
-
-            // No stored consent found
             if (count($rows) !== 1) {
+                // No stored consent found
                 return false;
             }
 
@@ -549,6 +546,28 @@ class Corto_Module_Services extends Corto_Module_Abstract
             throw new Corto_ProxyServer_Exception("Consent retrieval failed! Error: " . $e->getMessage());
         }
         return false;
+    }
+
+    protected function _storeConsent($serviceProviderEntityId, $attributes)
+    {
+        $dbh = $this->_getConsentDatabaseConnection();
+        if (!$dbh) {
+            return false;
+        }
+
+        $query = "INSERT INTO consent (usage_date, hashed_user_id, service_id, attribute) VALUES (NOW(), ?, ?, ?)";
+        $parameters = array(
+            sha1($attributes['uid'][0]),
+            $serviceProviderEntityId,
+            $this->_getAttributesHash($attributes)
+        );
+
+        $statement = $dbh->prepare($query);
+        if (!$statement->execute($parameters)) {
+            throw new Corto_Module_Services_Exception("Error storing consent: " . var_export($statement->errorInfo(), true));
+        }
+
+        return true;
     }
 
     /**
@@ -581,33 +600,5 @@ class Corto_Module_Services extends Corto_Module_Abstract
             $hashBase = implode('|', $names);
         }
         return sha1($hashBase);
-    }
-
-    protected function _storeConsent($serviceProviderEntityId, $attributes)
-    {
-        echo "storing consent...<br />";
-        $dbh = $this->_getConsentDatabaseConnection();
-        if (!$dbh) {
-            return false;
-        }
-
-        $query = "INSERT INTO consent (usage_date, hashed_user_id, service_id, attribute) VALUES (NOW(), ?, ?, ?)";
-        $parameters = array(
-            sha1($attributes['uid'][0]),
-            $serviceProviderEntityId,
-            $this->_getAttributesHash($attributes)
-        );
-
-        var_dump($this->_server->getConfigs());
-        var_dump($query);
-        var_dump($parameters);
-
-        $statement = $dbh->prepare($query);
-        if (!$statement->execute($parameters)) {
-            throw new Corto_Module_Services_Exception("Error storing consent: " . var_export($statement->errorInfo(), true));
-        }
-
-
-        return true;
     }
 }
