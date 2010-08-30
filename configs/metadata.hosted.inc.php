@@ -47,7 +47,24 @@
  * When an IdP was pre-selected, responses will be issued by the destination IdP, not by Corto.
  */
 
+/**
+ *
+ * - Prepare for processing
+ *
+ * - Processing 1
+ * - Processing 2
+ * - Processing 3
+ *
+ * - Send to SP
+ *
+ * 
+ */
+
+/**
+ * @var Corto_ProxyServer $proxyServer
+ */
+
 $hostedEntities = array(
-		'https://wayf.ruc.dk/corto/index.php/sp',
-		'https://wayf.ruc.dk/corto/index.php/wayf',
+        'https://wayf.ruc.dk/corto/index.php/sp',
+        'https://wayf.ruc.dk/corto/index.php/wayf',
 );

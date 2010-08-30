@@ -46,84 +46,84 @@ class Corto_XmlToArray
     /**
      * @var array All XML entities which are allowed to have multiple values in Corto
      */
-	protected static $_singulars = array(
-		'md:AffiliationDescriptor',
-#		'md:AttributeAuthorityDescriptor',
-#		'md:AuthnAuthorityDescriptor',
-		'md:Company',
-#		'md:EntitiesDescriptor',
-#		'md:EntityDescriptor',
-		'md:Extensions',
-		'md:GivenName',
-#		'md:IDPSSODescriptor',
-		'md:Organization',
-#		'md:PDPDescriptor',
-#		'md:RoleDescriptor',
-#		'md:SPSSODescriptor',
-		'md:SurName',
-		'saml:Advice',
-		'saml:Assertion', 			#
-		'saml:AssertionIDRef',		#
-		'saml:AssertionURIRef',		#
-#		'saml:Attribute',
-#		'saml:AttributeStatement',
-		'saml:Audience',
-		'saml:AudienceRestriction',
-		'saml:AuthnContext',
-		'saml:AuthnContextClassRef',
-		'saml:AuthnContextDecl',
-		'saml:AuthnContextDeclRef',
-		'saml:AuthnStatement',		#
-#		'saml:AuthzDecisionStatement',
-		'saml:BaseID',
-#		'saml:Condition',
-		'saml:Conditions',
-		'saml:EncryptedAssertion',	#
-#		'saml:EncryptedAttribute',
-		'saml:EncryptedID',
-		'saml:Evidence',
-		'saml:Issuer',
-		'saml:NameID',
-#		'saml:OneTimeUse',
-#		'saml:ProxyRestriction',
-#		'saml:Statement',
-		'saml:Subject',
-		'saml:SubjectConfirmation',
-		'saml:SubjectConfirmationData',
-		'saml:SubjectLocality',
-		'samlp:Artifact',
-		'samlp:Extensions',
-		'samlp:GetComplete',
-		'samlp:IDPList',
-		'samlp:NameIDPolicy',
-		'samlp:NewEncryptedID',
-		'samlp:NewID',
-		'samlp:RequestedAuthnContext',
-		'samlp:Scoping',
-		'samlp:Status',
-		'samlp:StatusCode',
-		'samlp:StatusDetail',
-		'samlp:StatusMessage',
-		'samlp:Terminate',
-		'xenc:EncryptedData',
-		'ds:CanonicalizationMethod',
-		'ds:DigestMethod',
-		'ds:DigestValue',
-		'ds:DSAKeyValue',
-		'ds:KeyInfo',
-#		'ds:KeyName',
-#		'ds:KeyValue',
-#		'ds:MgmtData',
-#		'ds:PGPData',
-#		'ds:RetrievalMethod',
-		'ds:RSAKeyValue',
-		'ds:Signature',
-		'ds:SignatureMethod',
-		'ds:SignatureValue',
-		'ds:SignedInfo',
-#		'ds:SPKIData',
-		'ds:Transforms',
-#		'ds:X509Data',
+    protected static $_singulars = array(
+        'md:AffiliationDescriptor',
+#        'md:AttributeAuthorityDescriptor',
+#        'md:AuthnAuthorityDescriptor',
+        'md:Company',
+#        'md:EntitiesDescriptor',
+#        'md:EntityDescriptor',
+        'md:Extensions',
+        'md:GivenName',
+#        'md:IDPSSODescriptor',
+        'md:Organization',
+#        'md:PDPDescriptor',
+#        'md:RoleDescriptor',
+#        'md:SPSSODescriptor',
+        'md:SurName',
+        'saml:Advice',
+        'saml:Assertion',             #
+        'saml:AssertionIDRef',        #
+        'saml:AssertionURIRef',        #
+#        'saml:Attribute',
+#        'saml:AttributeStatement',
+        'saml:Audience',
+        'saml:AudienceRestriction',
+        'saml:AuthnContext',
+        'saml:AuthnContextClassRef',
+        'saml:AuthnContextDecl',
+        'saml:AuthnContextDeclRef',
+        'saml:AuthnStatement',        #
+#        'saml:AuthzDecisionStatement',
+        'saml:BaseID',
+#        'saml:Condition',
+        'saml:Conditions',
+        'saml:EncryptedAssertion',    #
+#        'saml:EncryptedAttribute',
+        'saml:EncryptedID',
+        'saml:Evidence',
+        'saml:Issuer',
+        'saml:NameID',
+#        'saml:OneTimeUse',
+#        'saml:ProxyRestriction',
+#        'saml:Statement',
+        'saml:Subject',
+        'saml:SubjectConfirmation',
+        'saml:SubjectConfirmationData',
+        'saml:SubjectLocality',
+        'samlp:Artifact',
+        'samlp:Extensions',
+        'samlp:GetComplete',
+        'samlp:IDPList',
+        'samlp:NameIDPolicy',
+        'samlp:NewEncryptedID',
+        'samlp:NewID',
+        'samlp:RequestedAuthnContext',
+        'samlp:Scoping',
+        'samlp:Status',
+        'samlp:StatusCode',
+        'samlp:StatusDetail',
+        'samlp:StatusMessage',
+        'samlp:Terminate',
+        'xenc:EncryptedData',
+        'ds:CanonicalizationMethod',
+        'ds:DigestMethod',
+        'ds:DigestValue',
+        'ds:DSAKeyValue',
+        'ds:KeyInfo',
+#        'ds:KeyName',
+#        'ds:KeyValue',
+#        'ds:MgmtData',
+#        'ds:PGPData',
+#        'ds:RetrievalMethod',
+        'ds:RSAKeyValue',
+        'ds:Signature',
+        'ds:SignatureMethod',
+        'ds:SignatureValue',
+        'ds:SignedInfo',
+#        'ds:SPKIData',
+        'ds:Transforms',
+#        'ds:X509Data',
 );
 
     protected static $_multipleValues = array(
@@ -137,8 +137,8 @@ class Corto_XmlToArray
         'ds:Transform',
         'md:EntityDescriptor',
         'md:KeyDescriptor',
-#		'md:AssertionConsumerService',
-	);
+#        'md:AssertionConsumerService',
+    );
 
     public static function xml2array($xml)
     {
@@ -153,7 +153,7 @@ class Corto_XmlToArray
         }
 
         xml_parser_free($parser);
-  		self::$_singulars = array_fill_keys(self::$_singulars, 1);
+          self::$_singulars = array_fill_keys(self::$_singulars, 1);
         $return = self::_xml2array($values);
         return $return[0];
     }
@@ -172,7 +172,7 @@ class Corto_XmlToArray
      
     protected static function _xml2array(&$elements, $level = 1, $namespaceMapping = array())
     {
-    	static $defaultns;
+        static $defaultns;
         $newElement = array();
         while($value = $elements[self::$c++]) {
             if ($value['type'] == 'close') {
@@ -188,13 +188,13 @@ class Corto_XmlToArray
                     unset($attributes[$attributeKey]);
 
                     if (preg_match("/^xmlns:(.+)$/", $attributeKey, $namespacePrefixAndTag)) {
-                    	if (!self::$_namespaces[$attributeValue]) {
-                    		self::$_namespaces[$attributeValue] = $namespacePrefixAndTag[1];
-                    	}
+                        if (!self::$_namespaces[$attributeValue]) {
+                            self::$_namespaces[$attributeValue] = $namespacePrefixAndTag[1];
+                        }
                         $namespaceMapping[$namespacePrefixAndTag[1]] = self::$_namespaces[$attributeValue];
                         $hashedAttributes['_xmlns:'.self::$_namespaces[$attributeValue]] = $attributeValue;
                     } elseif (preg_match("/^xmlns$/", $attributeKey)) {
-                    	$defaultns = self::$_namespaces[$attributeValue];
+                        $defaultns = self::$_namespaces[$attributeValue];
                     } else {
                         $hashedAttributes[self::ATTRIBUTE_KEY_PREFIX . $attributeKey] = $attributeValue;
                     }
@@ -204,7 +204,7 @@ class Corto_XmlToArray
             if (preg_match("/^(.+):(.+)$/", $tagName, $namespacePrefixAndTag) && $prefix = $namespaceMapping[$namespacePrefixAndTag[1]]) {
                 $tagName = $prefix . ":" . $namespacePrefixAndTag[2];
             } else {
-            	$tagName = $defaultns . ":" . $tagName;
+                $tagName = $defaultns . ":" . $tagName;
             }
             $complete[self::TAG_NAME_KEY] = $tagName;
             if ($hashedAttributes) {
@@ -230,8 +230,8 @@ class Corto_XmlToArray
             } elseif ($value['type'] == 'complete') {
             }
             if ($level == 2) {
-#            	print_r($complete);
-#            	print time() . "\n";	
+#                print_r($complete);
+#                print time() . "\n";    
             }
             $newElement[] = $complete;
         }

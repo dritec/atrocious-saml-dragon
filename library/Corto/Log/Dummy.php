@@ -3,7 +3,7 @@
 /**
  * @internal include base class
  */
-require "Interface.php";
+require_once "Interface.php";
 
 /**
  * Dummy logging interface. Set logging to 'dummy' in production environments 
@@ -25,14 +25,14 @@ class Corto_Log_Dummy implements Corto_Log_Interface
      * The dummy logger ignores any call to debug()
      * @param String $message
      */
-	public function debug($message) 
-	{
-	}
-	
-	/**
-	 * The dummy logger ignores any call to err()
-	 * @param String $message
-	 */
+    public function debug($message) 
+    {
+    }
+    
+    /**
+     * The dummy logger ignores any call to err()
+     * @param String $message
+     */
     public function err($message)
     {
     }

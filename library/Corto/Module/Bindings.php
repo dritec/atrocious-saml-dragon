@@ -61,14 +61,14 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
      */
     public function receiveRequest()
     {
-		$request = $this->_receiveMessage(self::KEY_REQUEST);
-		$request['_ForceAuthn'] = isset($request['_ForceAuthn']) && ($request['_ForceAuthn'] == 'true' || $request['_ForceAuthn'] == '1');
- 		$request['_IsPassive']   = isset($request['_IsPassive']) && ($request['_IsPassive'] == 'true' || $request['_IsPassive'] == '1');
+        $request = $this->_receiveMessage(self::KEY_REQUEST);
+        $request['_ForceAuthn'] = isset($request['_ForceAuthn']) && ($request['_ForceAuthn'] == 'true' || $request['_ForceAuthn'] == '1');
+        $request['_IsPassive']   = isset($request['_IsPassive']) && ($request['_IsPassive'] == 'true' || $request['_IsPassive'] == '1');
 
-       	$this->_server->getSessionLog()->debug("Received request: " . var_export($request, true));
+        $this->_server->getSessionLog()->debug("Received request: " . var_export($request, true));
 
-       	$this->_verifyRequest($request);
-       	$this->_c14nRequest($request);
+        $this->_verifyRequest($request);
+        $this->_c14nRequest($request);
 
         return $request;
     }
@@ -150,11 +150,11 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         switch ($key) {
             case self::KEY_REQUEST:
                 // Trying to get an artifact from an SP, identify ourselves as an idp
-                $issuer = $this->_server->getCurrentEntityUrl();
+                $issuer = $this->_server->getCurrentEntityUrl('idPMetadataService');
                 break;
             case self::KEY_RESPONSE:
                 // Trying to get an artifact from an IdP, identify ourselves as a sp
-                $issuer = $this->_server->getCurrentEntityUrl();
+                $issuer = $this->_server->getCurrentEntityUrl('sPMetadataService');
                 break;
             default:
                 throw new Corto_Module_Bindings_Exception("Unknown message type '$key'");
@@ -229,8 +229,12 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         $messageArray   = $this->_getArrayFromReceivedMessage($message);
         
         $relayState     = $_POST['RelayState'];
-        $messageArray[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['RelayState'] = $relayState;
-        $messageArray[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['Raw'] = $message;
+        $messageArray[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['RelayState']   = $relayState;
+        $messageArray[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['Raw']          = $message;
+        $messageArray[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['paramname']    = $key;
+        if (isset($_POST['return'])) {
+            $messageArray[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['Return'] = $_POST['return']; 
+        }
         
         return $messageArray;
     }
@@ -249,7 +253,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         }
 
         $message = gzinflate(base64_decode($_GET[$key]));
-	    $messageArray = $this->_getArrayFromReceivedMessage($message);
+        $messageArray = $this->_getArrayFromReceivedMessage($message);
 
         $relayState = "";
         if (isset($_GET['RelayState'])) {
@@ -263,6 +267,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         }
 
         $messageArray[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['Raw'] = $message;
+        $messageArray[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['paramname'] = $key;
 
         return $messageArray;
     }
@@ -276,7 +281,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
      */
     protected function _getArrayFromReceivedMessage($message)
     {
- 		if (substr($message, 0, 1) == '{') {
+        if (substr($message, 0, 1) == '{') {
             return json_decode($message, true);
         }
 
@@ -293,10 +298,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
      */
     protected function _verifyRequest(array $request)
     {
-        $this->_verifyKnownIssuer($request);
-
-        $requestIssuer = $request['saml:Issuer']['__v'];
-        $remoteEntity = $this->_server->getRemoteEntity($requestIssuer);
+        $remoteEntity = $this->_verifyKnownIssuer($request);
         
         if ((isset($remoteEntity['AuthnRequestsSigned']) && $remoteEntity['AuthnRequestsSigned']) ||
             ($this->_server->getCurrentEntitySetting('WantsAuthnRequestsSigned', false))) {
@@ -319,6 +321,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         if ($remoteEntity===null) {
             throw new Corto_Module_Bindings_VerificationException("Issuer '{$messageIssuer}' is not a known remote entity? (please add SP/IdP to Remote Entities)");
         }
+        return $remoteEntity;
     }
 
     /**
@@ -533,7 +536,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
     protected function _verifyMessageDestinedForUs(array $message)
     {
         $destinationId = $message['_Destination'];
-        if ($destinationId) { // Destination is optional
+        if ($destinationId && $this->_verifyDestination) { // Destination is optional
             if (strpos($this->_server->getCurrentEntityUrl(), $destinationId) !== 0) {
                 throw new Corto_Module_Bindings_VerificationException("Destination: '$destinationId' is not here; message not destined for us");
             }
@@ -631,7 +634,7 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
         $this->_server->sendOutput($xml);
     }
 
-    public function send($message, $remoteEntity)
+    public function send(array $message, array $remoteEntity)
     {
         $bindingUrn = $message['__']['ProtocolBinding'];
 
@@ -639,12 +642,11 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
             throw new Corto_Module_Bindings_Exception('Unknown binding: '. $bindingUrn);
         }
         $function = $this->_bindings[$bindingUrn];
-
         
         $this->$function($message, $remoteEntity);
     }
 
-    protected function _sendHTTPRedirect($message, $remoteEntity)
+    protected function _sendHTTPRedirect(array $message, $remoteEntity)
     {
         $messageType = $message['__']['paramname'];
 
@@ -786,8 +788,9 @@ class Corto_Module_Bindings extends Corto_Module_Abstract
             }
         }
 
-        $extra = $message['__']['RelayState'] ? '<input type="hidden" name="RelayState" value="' . htmlspecialchars($message['__']['RelayState']) . '">' : '';
-        $extra .= $message['__']['target']    ? '<input type="hidden" name="target" value="'     . htmlspecialchars($message['__']['target']) . '">' : '';
+        $extra  = isset($message['__']['RelayState']) ? '<input type="hidden" name="RelayState" value="' . htmlspecialchars($message['__']['RelayState']) . '">' : '';
+        $extra .= isset($message['__']['target'])     ? '<input type="hidden" name="target" value="'     . htmlspecialchars($message['__']['target']) . '">' : '';
+        $extra .= isset($message['__']['return'])     ? '<input type="hidden" name="return" value="'     . htmlspecialchars($message['__']['return']) . '">' : '';
         $encodedMessage = htmlspecialchars(base64_encode($encodedMessage));
 
         $action = $message['_Destination'] . (isset($message['_Recipient'])?$message['_Recipient']:'');

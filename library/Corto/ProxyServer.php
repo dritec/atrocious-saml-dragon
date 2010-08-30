@@ -11,7 +11,7 @@ class Corto_ProxyServer_Exception extends Exception
 }
 
 class Corto_ProxyServer
-{    
+{
     const MODULE_BINDINGS   = 'Bindings';
     const MODULE_SERVICES   = 'Services';
 
@@ -109,6 +109,11 @@ class Corto_ProxyServer
         return $default;
     }
 
+    public function getConfigs()
+    {
+        return $this->_configs;
+    }
+
     public function setConfigs($configs)
     {
         $this->_configs = $configs;
@@ -118,12 +123,6 @@ class Corto_ProxyServer
     public function getCurrentEntity()
     {
         return $this->_entities['current'];
-    }
-
-    public function setCurrentEntity($entity)
-    {
-        $this->_entities['current'] = $entity;
-        return $this;
     }
 
     public function setHostedEntities($entities)
@@ -141,6 +140,13 @@ class Corto_ProxyServer
         return $this->_entities['hosted'];
     }
 
+    public function getHostedEntity($entityId)
+    {
+        if (isset($this->_entities['hosted'][$entityId])) {
+            return $entityId;
+        }
+    }
+
     public function getCurrentEntityUrl($serviceName = "", $remoteEntityId = "")
     {
         return $this->getHostedEntityUrl($this->_entities['current']['EntityCode'], $serviceName, $remoteEntityId);
@@ -156,13 +162,13 @@ class Corto_ProxyServer
     
     public function selfUrl($entityid = null)
     { 
-    	return  'http' . ($_SERVER['HTTPS'] ? 's' : '') . '://' . $_SERVER['HTTP_HOST'] . $this->selfPath($entityid);
+        return  'http' . ($_SERVER['HTTPS'] ? 's' : '') . '://' . $_SERVER['HTTP_HOST'] . $this->selfPath($entityid);
     }
 
-	public function selfPath($entityid = null)
-	{
-		return $_SERVER['SCRIPT_NAME'] . '/' . $entityid ;
-	}
+    public function selfPath($entityid = null)
+    {
+        return $_SERVER['SCRIPT_NAME'] . '/' . $entityid ;
+    }
 
     public function getHostedEntityUrl($entityCode, $serviceName = "", $remoteEntityId = "")
     {
@@ -170,8 +176,8 @@ class Corto_ProxyServer
         if ($remoteEntityId) {
             $entityPart .= '_' . md5($remoteEntityId);
         }
-		return 'http' . ($_SERVER['HTTPS'] ? 's' : '') . '://' . $_SERVER['HTTP_HOST']
-			. $_SERVER['SCRIPT_NAME'] . '/' . $entityPart  . ($serviceName ? '/': '') . $serviceName;
+        return 'http' . ($_SERVER['HTTPS'] ? 's' : '') . '://' . $_SERVER['HTTP_HOST']
+            . $_SERVER['SCRIPT_NAME'] . '/' . $entityPart  . ($serviceName ? '/': '') . $serviceName;
     }
 
     public function getRemoteEntity($entityId)
@@ -183,7 +189,6 @@ class Corto_ProxyServer
 
     public function getRemoteEntities()
     {
-    	
         return array_intersect($this->_entities['remote'], array($this->_entities['current']));
     }
 
@@ -211,7 +216,7 @@ class Corto_ProxyServer
     public function serveRequest($uri)
     {
         $parameters = $this->_getParametersFromUri($uri);
-        $this->_setCurrentEntity($parameters['EntityCode'], $parameters['RemoteIdPMd5']);
+        $this->setCurrentEntity($parameters['EntityCode'], $parameters['RemoteIdPMd5']);
 
         $this->startSession();
         $this->getSessionLog()->debug("Started request with $uri, resulting in parameters: ". var_export($parameters, true));
@@ -257,7 +262,6 @@ class Corto_ProxyServer
             'EntityCode'    => '',
             'ServiceName'   => '',
             'RemoteIdPMd5'  => '',
-
         );
 
         if ($uri) {
@@ -286,6 +290,36 @@ class Corto_ProxyServer
         }
 
         return $parameters;
+    }
+
+    public function setCurrentEntity($entityCode, $remoteIdPMd5 = "")
+    {
+        $entityId = $this->getHostedEntityUrl($entityCode);
+        $hostedEntity = array();
+        if (isset($this->_entities['hosted'][$entityId])) {
+            $hostedEntity = $this->_entities['hosted'][$entityId];
+        }
+
+        $hostedEntity['EntityId']   = $entityId;
+        $hostedEntity['EntityCode'] = $entityCode;
+
+        if ($remoteIdPMd5) {
+            $remoteEntityIds = array_keys($this->_entities['remote']);
+            foreach ($remoteEntityIds as $remoteEntityId) {
+                if (md5($remoteEntityId) === $remoteIdPMd5) {
+                    $hostedEntity['idp'] = $remoteEntityId;
+                    $hostedEntity['TransparantProxy'] = true;
+                    $this->getSessionLog()->debug("Detected pre-selection of $remoteEntityId as IdP, switching to transparant mode");
+                    break;
+                }
+            }
+            if (!isset($hostedEntity['IdP'])) {
+                $this->getSessionLog()->warn("Unable to map $remoteIdPMd5 to a remote entity!");
+            }
+        }
+
+        $this->_entities['current'] = $hostedEntity;
+        return $this;
     }
 
 ////////  REQUEST HANDLING /////////
@@ -341,7 +375,7 @@ class Corto_ProxyServer
 
             '_AttributeConsumingServiceIndex'   => $originalRequest['_AttributeConsumingServiceIndex'],
 
-            'saml:Issuer' => array('__v' => $this->getCurrentEntityUrl()),
+            'saml:Issuer' => array('__v' => $this->getCurrentEntityUrl('sPMetadataService')),
             'ds:Signature' => '__placeholder__',
             'samlp:NameIDPolicy' => array(
                 '_Format' => 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient',
@@ -380,7 +414,7 @@ class Corto_ProxyServer
         $request['samlp:Scoping']['samlp:RequesterID'][] = array('__v' => $originalRequest['saml:Issuer']['__v']);
 
         return $request;
-    }    
+    }
 
 //////// RESPONSE HANDLING ////////
 
@@ -419,7 +453,7 @@ class Corto_ProxyServer
                 unset($authenticatingAuthorities[$key]);
             }
         }
-        if ($this->getCurrentEntityUrl() !== $sourceResponse['saml:Issuer']['__v']) {
+        if ($this->getCurrentEntityUrl('idPMetadataService') !== $sourceResponse['saml:Issuer']['__v']) {
             $authenticatingAuthorities[] = array('__v' => $sourceResponse['saml:Issuer']['__v']);
         }
 
@@ -541,7 +575,7 @@ class Corto_ProxyServer
             '_IssueInstant' => $now,
             '_InResponseTo' => $request['_ID'],
 
-            'saml:Issuer' => array('__v' => $this->getCurrentEntityUrl()),
+            'saml:Issuer' => array('__v' => $this->getCurrentEntityUrl('idPMetadataService')),
             'samlp:Status' => array(
                 'samlp:StatusCode' => array(
                     '_Value' => 'urn:oasis:names:tc:SAML:2.0:status:Success',
@@ -570,12 +604,13 @@ class Corto_ProxyServer
         return $response;
     }
 
-    function sendResponse($request, $response)
+    function sendResponseToRequestIssuer($request, $response)
     {
         $requestIssuer = $request['saml:Issuer']['__v'];
         $sp = $this->getRemoteEntity($requestIssuer);
 
         if ($response['samlp:Status']['samlp:StatusCode']['_Value'] == 'urn:oasis:names:tc:SAML:2.0:status:Success') {
+
             $this->filterOutputAssertionAttributes($response);
 
             return $this->getBindingsModule()->send($response, $sp);
@@ -584,6 +619,27 @@ class Corto_ProxyServer
             unset($response['saml:Assertion']);
             return $this->getBindingsModule()->send($response, $sp);
         }
+    }
+
+    public function getReceivedRequestFromResponseTarget($id)
+    {
+        if (!$id || !isset($_SESSION[$id])) {
+            throw new Corto_ProxyServer_Exception("Unknown id ($id) in POST target or InResponseTo attribute?!?");
+        }
+
+        // Get the ID of the original request (from the SP)
+        if (!isset($_SESSION[$id]['_InResponseTo'])) {
+            echo "<pre>";
+            var_dump($_SESSION);
+            echo "</pre>";
+            throw new Corto_ProxyServer_Exception("ID `$id` does not have a _InResponseTo?!?");
+        }
+        $originalRequestId = $_SESSION[$id]['_InResponseTo'];
+
+        if (!isset($_SESSION[$originalRequestId]['SAMLRequest'])) {
+            throw new Corto_ProxyServer_Exception('Response has no known Request');
+        }
+        return $_SESSION[$originalRequestId]['SAMLRequest'];
     }
 
 ////////  ATTRIBUTE FILTERING /////////
@@ -629,11 +685,9 @@ class Corto_ProxyServer
 
         // Take the attributes out
         $attributes = Corto_XmlToArray::attributes2array($responseAssertionAttributes);
-
         // Pass em along
-        $callback($entityMetaData, $response, $attributes);
-
-        // Put em back
+        call_user_func_array($callback, array($entityMetaData, $response, $attributes));
+        // Put em back where they belong
         $responseAssertionAttributes = Corto_XmlToArray::array2attributes($attributes);
     }
 
@@ -724,8 +778,8 @@ class Corto_ProxyServer
         $this->getSessionLog()->debug("Redirecting to $location");
         
         if ($this->getConfig('debug', true)) {
-	        $output = $this->renderTemplate('redirect', array('location'=>$location, 'message' => $message));
-	        $this->sendOutput($output);
+            $output = $this->renderTemplate('redirect', array('location'=>$location, 'message' => $message));
+            $this->sendOutput($output);
         } else {
             $this->sendHeader('Location', $location);
         }
@@ -743,6 +797,28 @@ class Corto_ProxyServer
     }
 
 //////// UTILITIES /////////
+
+    /**
+     * For a given url hosted by this Corto installation, get the EntityCode, remoteIdPMd5Hash and ServiceName.
+     *
+     * Gets the PATH_INFO from a URL like: http://host/path/corto.php/path/info
+     *
+     * @param string $url
+     * @return void
+     */
+    public function getParametersFromUrl($url)
+    {
+        $urlPath = parse_url($url, PHP_URL_PATH); // /path/corto.php/EntityCode_remoteIdPMd5Hash/ServiceName
+        $currentPath = $_SERVER['SCRIPT_NAME']; // /path/corto.php
+
+        if (strpos($urlPath, $currentPath) !== 0) {
+            $message = "Unable to get Parameters from URL: '$url' for Corto installation at path: '$currentPath'";
+            throw new Corto_ProxyServer_Exception($message);
+        }
+
+        $uri = substr($currentPath, strlen($currentPath));
+        return $this->_getParametersFromUri($uri);
+    }
 
     /**
      * Generate a SAML datetime with a given delta in seconds.

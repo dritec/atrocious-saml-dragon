@@ -3,7 +3,7 @@
 /**
  * @internal include base class
  */
-require "Interface.php";
+require_once "Interface.php";
 
 /**
  * Corto logger that implements logging to a file.

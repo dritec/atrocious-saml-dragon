@@ -3,12 +3,11 @@
 /**
  * @internal require interface
  */
-require "Interface.php";
+require_once "Interface.php";
 
 /**
  * A logger class that logs to Syslog.
  * @author Mads, Ivo
- *
  */
 class Corto_Log_Syslog implements Corto_Log_Interface
 {    
