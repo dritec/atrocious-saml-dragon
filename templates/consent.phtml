@@ -9,9 +9,24 @@
             <input type="hidden" name="ID" value="<?= $ID ?>" />
             <input type="hidden" name="consent" value="yes" />
             Do you consent to the following information being sent to your Service Provider:
-            <pre>
-            <? print_r($attributes) ?>
-            </pre>
+            <?php foreach ($attributes as $uid => $attributeValues) { ?>
+            <dl style="margin-left: 60px;">
+                <dt style="font-weight: bold;">
+                    <?=$this->getAttributeName($uid, 'nl_NL')?>
+                </dt>
+                <dd>
+                    <? /** Single attribute value */ if (count($attributeValues)==1) { ?>
+                      <?=$attributeValues[0];?>
+                    <? } /** Multiple attribute values */ else { ?>
+                    <ul>
+                    <?php foreach ($attributeValues as $value) { ?>
+                        <li><?=$value?></li>
+                    <?php } ?>
+                    </ul>
+                    <? } ?>
+                </dd>
+            </dl>
+            <? } ?>
             <input type=submit value=Send>
         </form>
     </body>
