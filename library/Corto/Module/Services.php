@@ -538,7 +538,7 @@ class Corto_Module_Services extends Corto_Module_Abstract
             }
 
             // Update usage date
-            $statement = $dbh->prepare('UPDATE {$table} SET usage_date = NOW() WHERE attribute = ?');
+            $statement = $dbh->prepare("UPDATE {$table} SET usage_date = NOW() WHERE attribute = ?");
             $statement->execute(array($attributesHash));
 
             return true;

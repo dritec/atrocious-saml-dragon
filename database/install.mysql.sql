@@ -2,11 +2,14 @@
 -- Table structure for table `consent`
 --
 
-CREATE TABLE IF NOT EXISTS `consent` (
-  `consent_date` timestamp NOT NULL default CURRENT_TIMESTAMP on update CURRENT_TIMESTAMP,
+CREATE TABLE `consent` (
+  `consent_date` timestamp NOT NULL default CURRENT_TIMESTAMP,
   `usage_date` timestamp NOT NULL default '0000-00-00 00:00:00',
   `hashed_user_id` varchar(80) collate utf8_unicode_ci NOT NULL,
   `service_id` varchar(255) collate utf8_unicode_ci NOT NULL,
   `attribute` varchar(80) collate utf8_unicode_ci NOT NULL,
-  UNIQUE KEY `hashed_user_id` (`hashed_user_id`,`service_id`)
+  PRIMARY KEY  (`hashed_user_id`,`service_id`,`attribute`),
+  KEY `hashed_user_id` (`hashed_user_id`),
+  KEY `service_id` (`service_id`),
+  KEY `attribute` (`attribute`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
