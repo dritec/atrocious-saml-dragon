@@ -21,6 +21,8 @@ class Corto_ProxyServer
     const MESSAGE_TYPE_REQUEST  = 'SAMLRequest';
     const MESSAGE_TYPE_RESPONSE = 'SAMLResponse';
 
+    const DEFAULT_URN_PREFIX = 'urn:mace:dir:attribute-def:';
+
     protected $_requestArray;
     protected $_responseArray;
 
@@ -37,6 +39,7 @@ class Corto_ProxyServer
         'hosted'=>array(),
         'remote'=>array(),
     );
+    protected $_attributes = array();
     protected $_modules = array();
     protected $_templateSource;
 
@@ -118,6 +121,42 @@ class Corto_ProxyServer
     {
         $this->_configs = $configs;
         return $this;
+    }
+
+    public function setAttributeMetadata(array $attributes)
+    {
+        $this->_attributes = $attributes;
+        return $this;
+    }
+
+    public function getAttributeName($uid, $ietfLanguageTag = 'en_US')
+    {
+        $name = $this->_getAttributeDataType('Name', $uid, $ietfLanguageTag);
+        if (!$name) {
+            $name = $uid;
+        }
+        return $name;
+    }
+
+    public function getAttributeDescription($uid, $ietfLanguageTag = 'en_US')
+    {
+        $description = $this->_getAttributeDataType('Description', $uid, $ietfLanguageTag);
+        if (!$description) {
+            $description = '';
+        }
+        return $description;
+    }
+
+    protected function _getAttributeDataType($type, $uid, $ietfLanguageTag = 'en_US')
+    {
+        if (isset($this->_attributes[$uid][$type][$ietfLanguageTag])) {
+            return $this->_attributes[$uid][$type][$ietfLanguageTag];
+        }
+        if (isset($this->_attributes[self::DEFAULT_URN_PREFIX . $uid][$type][$ietfLanguageTag])) {
+            return $this->_attributes[self::DEFAULT_URN_PREFIX . $uid][$type][$ietfLanguageTag];
+        }
+        var_dump("Unable to find $uid, $type, $ietfLanguageTag even with prefix: " . self::DEFAULT_URN_PREFIX . $uid . '... cant find it man');
+        // @todo warn the system! requested a unkown UID or langauge...
     }
 
     public function getCurrentEntity()

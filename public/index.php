@@ -14,6 +14,9 @@ require '../configs/metadata.remote.inc.php';
 $server->setRemoteEntities($remoteEntities);
 $server->setHostedEntities($remoteEntities);
 
+require '../configs/attributes.inc.php';
+$server->setAttributeMetadata($attributes);
+
 $server->setTemplateSource(
     Corto_ProxyServer::TEMPLATE_SOURCE_FILESYSTEM,
     array(
