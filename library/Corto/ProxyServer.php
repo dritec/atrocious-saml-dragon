@@ -479,6 +479,7 @@ class Corto_ProxyServer
         if (isset($request[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['Transparent']) &&
             $request[Corto_XmlToArray::PRIVATE_KEY_PREFIX]['Transparent']) {
             $response['saml:Issuer']['__v'] = $sourceResponse['saml:Issuer']['__v'];
+            $response['saml:Assertion']['saml:Issuer']['__v'] = $sourceResponse['saml:Assertion']['saml:Issuer']['__v'];
         }
 
         $response['samlp:Status']   = $sourceResponse['samlp:Status'];
@@ -500,6 +501,7 @@ class Corto_ProxyServer
         $subjectConfirmation['_Recipient']    = $request['_AssertionConsumerServiceURL'];
         $subjectConfirmation['_InResponseTo'] = $request['_ID'];
 
+        $response['saml:Assertion']['saml:Issuer'] = array('__v' => $response['saml:Issuer']['__v']);
         $response['saml:Assertion']['saml:Conditions']['saml:AudienceRestriction']['saml:Audience']['__v'] = $request['saml:Issuer']['__v'];
 
         return $response;
