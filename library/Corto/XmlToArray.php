@@ -172,7 +172,7 @@ class Corto_XmlToArray
      
     protected static function _xml2array(&$elements, $level = 1, $namespaceMapping = array())
     {
-        static $defaultns;
+        static $defaultNs;
         $newElement = array();
         while($value = $elements[self::$c++]) {
             if ($value['type'] == 'close') {
@@ -194,7 +194,7 @@ class Corto_XmlToArray
                         $namespaceMapping[$namespacePrefixAndTag[1]] = self::$_namespaces[$attributeValue];
                         $hashedAttributes['_xmlns:'.self::$_namespaces[$attributeValue]] = $attributeValue;
                     } elseif (preg_match("/^xmlns$/", $attributeKey)) {
-                        $defaultns = self::$_namespaces[$attributeValue];
+                        $defaultNs = self::$_namespaces[$attributeValue];
                     } else {
                         $hashedAttributes[self::ATTRIBUTE_KEY_PREFIX . $attributeKey] = $attributeValue;
                     }
@@ -204,7 +204,7 @@ class Corto_XmlToArray
             if (preg_match("/^(.+):(.+)$/", $tagName, $namespacePrefixAndTag) && $prefix = $namespaceMapping[$namespacePrefixAndTag[1]]) {
                 $tagName = $prefix . ":" . $namespacePrefixAndTag[2];
             } else {
-                $tagName = $defaultns . ":" . $tagName;
+                $tagName = $defaultNs . ":" . $tagName;
             }
             $complete[self::TAG_NAME_KEY] = $tagName;
             if ($hashedAttributes) {
@@ -332,6 +332,7 @@ class Corto_XmlToArray
             );
             foreach ((array)$attribute as $value) {
                 $newAttribute['saml:AttributeValue'][] = array (
+                   '_xmlns:xsi'     => 'http://www.w3.org/2001/XMLSchema-instance',
                    '_xsi:type'      => 'xs:string',
                    self::VALUE_KEY  => $value,
                 );
