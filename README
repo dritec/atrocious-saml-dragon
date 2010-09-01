@@ -1,3 +1,10 @@
+Requires:
+PHP 5.2+
+libxml
+
+Optionally:
+Use of consent requires MySQL.
+
 GLOSSARY
 ====================
 * Consent

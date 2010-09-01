@@ -555,7 +555,9 @@ class Corto_Module_Services extends Corto_Module_Abstract
             return false;
         }
 
-        $query = "INSERT INTO consent (usage_date, hashed_user_id, service_id, attribute) VALUES (NOW(), ?, ?, ?)";
+        $query = "INSERT INTO consent (usage_date, hashed_user_id, service_id, attribute)
+                  VALUES (NOW(), ?, ?, ?)
+                  ON DUPLICATE KEY UPDATE usage_date=VALUES(usage_date), attribute=VALUES(attribute)";
         $parameters = array(
             sha1($attributes['uid'][0]),
             $serviceProviderEntityId,
