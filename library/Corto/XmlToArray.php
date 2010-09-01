@@ -313,6 +313,7 @@ class Corto_XmlToArray
 
     public static function attributes2array($attributes)
     {
+        $res = array();
         foreach((array)$attributes as $attribute) {
             foreach ($attribute['saml:AttributeValue'] as $value) {
                 $res[$attribute['_Name']][] = $value[self::VALUE_KEY];
@@ -323,6 +324,7 @@ class Corto_XmlToArray
 
     public static function array2attributes($attributes)
     {
+        $res = array();
         foreach((array)$attributes as $name => $attribute) {
             $newAttribute = array(
                 '_Name' => $name,
