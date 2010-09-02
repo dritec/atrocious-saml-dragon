@@ -44,7 +44,7 @@ class Corto_XmlToArray
      );
 
     /**
-     * @var array All XML entities which are allowed to have multiple values in Corto
+     * @var array All XML entities which are treated as single values in Corto.
      */
     protected static $_singulars = array(
         'md:AffiliationDescriptor',
@@ -159,7 +159,7 @@ class Corto_XmlToArray
     }
 
     /**
-     * Convert a flat array of entities, begotten from the PHP xml_parser into a hirarchical array recursively.
+     * Convert a flat array of entities, begotten from the PHP xml_parser into a hierarchical array recursively.
      *
      * @static
      * @param array $elements
@@ -277,7 +277,7 @@ class Corto_XmlToArray
     protected static function _array2xml($hash, $elementName, XMLWriter $writer, $level = 0)
     {
         if ($level > self::MAX_RECURSION_LEVEL) {
-            throw new Exception('Recursion threshhold exceed on element: '.$elementName . ' for hashvalue: ' . var_export($hash, true));
+            throw new Exception('Recursion threshold exceed on element: '.$elementName . ' for hashvalue: ' . var_export($hash, true));
         }
         if ($hash == self::PLACEHOLDER_VALUE) {
             // Ignore placeholders
